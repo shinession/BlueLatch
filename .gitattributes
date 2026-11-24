@@ -1,0 +1,7 @@
+# Normalise line endings so gofmt and the scripts behave the same everywhere.
+* text=auto eol=lf
+*.go text eol=lf
+*.ps1 text eol=lf
+*.png binary
+*.ico binary
+*.syso binary

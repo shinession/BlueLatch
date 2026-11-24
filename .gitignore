@@ -1,0 +1,20 @@
+# Build output
+/release/
+/dist/
+/bin/
+*.exe
+
+# Logs and local data
+*.log
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Editors and OS
+.vscode/
+.idea/
+.history/
+*.swp
+Thumbs.db
