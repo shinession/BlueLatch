@@ -2,7 +2,7 @@
 
 ## BlueLatch architecture
 
-This document describes what is implemented in version 0.1.1. What is planned is marked as planned.
+This document describes what is implemented in version 0.1.2. What is planned is marked as planned.
 
 ### Overview
 
@@ -27,7 +27,7 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 | Package | Responsibility |
 |---|---|
-| `cmd/bluelatch` | The commands `list`, `connect`, `version`. Picks the device the user named and prints the progress of the engine. |
+| `cmd/bluelatch` | The commands `list`, `connect`, `disconnect`, `version`. Picks the device the user named and prints the progress of the engine. |
 | `cmd/bluelatch-gui` | The window program: flags, single instance, start-up repair, then `ui.Run`. |
 | `internal/ui` | The WebView2 window and its page (`web/index.html`, embedded). |
 | `internal/app` | What the window shows and does: the list of paired audio devices, kept fresh, and at most one connection job. Also the demo adapter. |
@@ -35,6 +35,8 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 | `internal/bt` | The types (`Device`, `Address`, `Service`, `ClassOfDevice`), the `Adapter` interface, `Find`, the journal, and the Windows implementation of the interface. |
 | `internal/logging` | The log file. |
 | `internal/appdir` | The folder `%LocalAppData%\BlueLatch`. |
+| `assets/logo` | The source of the icon (`bluelatch.svg`) and its PNG frames. |
+| `tools/mkrsrc` | Writes the `.syso` files that give the programs their icon and version information. Standard library only. |
 
 ### Reading the devices
 
@@ -65,6 +67,12 @@ Rules built on them:
 3. Return what happened to each service. It is an error only when no service could be enabled. A nil error does not mean the device is connected.
 
 The call is synchronous and cannot be interrupted (ADR 0001). Observed once, on a speaker: switching off about 3.1 s, switching on about 3.3 s, so a request takes about 6.5 s. The service is missing from the list of installed services while it is off.
+
+### The disconnect request
+
+`Adapter.Disconnect` sends `IOCTL_BTH_DISCONNECT_DEVICE` (`0x0041000C`), with the 64-bit address of the device as its input, to the handle of the radio that knows the device (`DeviceIoControl`). It drops the baseband connection; the pairing and the services stay as they are (ADR 0007). Windows answers a device that is not connected with `ERROR_DEVICE_NOT_CONNECTED` (1167), which becomes `bt.ErrNotConnected`. No other code is taken for it.
+
+`Engine.Disconnect` reads the device first. A device that is not connected is reported as such (`bt.ErrNotConnected`) and nothing is sent. Otherwise it sends the request and reads the device every `PollInterval` until Windows reports it as disconnected (success), or until `DisconnectTimeout` (5 s) has passed (`ErrStillConnected`). The request returns at once and switches nothing off, so it needs no record in the journal, and stopping the wait leaves nothing half done.
 
 ### The journal
 
@@ -105,10 +113,10 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 
 - `devices`: the paired audio devices with their name, address, kind (`headphones`, `headset`, `speaker`, `audio`, from the minor class), and whether they are connected.
 - `problem`: `no-radio`, or `error` with the text, when the devices cannot be read. A change of the problem is logged, not every read.
-- `job`: the connection being retried, or the last one: device, phase (`starting`, `reconnecting`, `waiting`, `backoff`, `cancelling`, `connected`, `cancelled`, `failed`), attempt, start time, the time of the next attempt, the detail of what Windows did, the error, and an error code (`no-radio`, `not-paired`, `no-services`, `gave-up`).
+- `job`: the connection being retried or dropped, or the last one: its kind (`connect` or `disconnect`), device, phase (`starting`, `reconnecting`, `waiting`, `backoff`, `cancelling`, `connected` for a connection; `disconnecting`, `disconnected` for a disconnection; `cancelled` and `failed` for both), attempt, start time, the time of the next attempt, the detail of what Windows did, the error, and an error code (`no-radio`, `not-paired`, `no-services`, `gave-up`, `still-connected`).
 - `closing`: the program is shutting down.
 
-`Connect` starts a job and returns at once. Only one job runs at a time (`ErrBusy`). `Cancel` marks the job as `cancelling` and cancels its context. `Shutdown(timeout)` cancels the job and the reading, and waits for the request that Windows is working on; it reports false after the timeout. `NewDemo` is an adapter with made-up devices for trying the window.
+`Connect` and `Disconnect` start a job and return at once. Only one job runs at a time (`ErrBusy`), of either kind. A disconnection that finds the device not connected counts as done. `Cancel` marks the job as `cancelling` and cancels its context. `Shutdown(timeout)` cancels the job and the reading, and waits for the request that Windows is working on; it reports false after the timeout. `NewDemo` is an adapter with made-up devices for trying the window.
 
 ### The window
 
@@ -121,15 +129,21 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 | `-debug` | Switch on the developer tools and the context menu. |
 | `-demo` | Use the made-up devices of `app.NewDemo`; no real device is touched. The title is "BlueLatch (demo)". |
 | `-demo-connect NAME` | With `-demo`, start connecting that device 1.5 s after the start. |
+| `-demo-disconnect NAME` | With `-demo`, start disconnecting that device 1.5 s after the start. |
 
 `ui.Run` uses `github.com/jchv/go-webview2` (ADR 0003):
 
 - The page is `web/index.html`, embedded in the executable. It loads nothing from outside (content security policy), and sets the names of devices as text.
-- Three functions are bound: `blState()`, `blConnect(address)`, `blCancel()`. They return at once. The page calls `blState` every 500 ms and draws the cards from the state; a second timer updates the elapsed time and the countdown. A finished job disappears from its card after 8 s (30 s for a failure).
+- Four functions are bound: `blState()`, `blConnect(address)`, `blDisconnect(address)`, `blCancel()`. They return at once. The page calls `blState` every 500 ms and draws the cards from the state; a second timer updates the elapsed time and the countdown. A finished job disappears from its card after 8 s (30 s for a failure).
+- A card has one button: Cancel while that device is being connected, Disconnect when it is connected, Connect otherwise. While a job runs, the buttons of the other cards are disabled. The header of the page shows the icon, and the title bar and the taskbar button get the icon of the program in the size that fits the DPI of the window (`setWindowIcons`).
 - The page follows the dark or light theme of Windows. The title bar is switched to dark when the apps of the user use the dark theme. The process is per-monitor DPI aware and the window is scaled to the system DPI. WebView2 keeps its data in `%LocalAppData%\BlueLatch\WebView2`.
 - The page blocks reload (F5, Ctrl+R), print, save, find, zoom, and dropped files, because the page was loaded from a string and a reload would empty it.
 - Closing the window: the first `WM_CLOSE` calls `App.Shutdown` (at most 30 s) and is ignored; when it has returned, the window is closed for real. A request that Windows is working on therefore always runs to its end.
 - When the window cannot be created, usually because the WebView2 runtime is missing, a message box names the download page.
+
+### The icon and the version information
+
+`tools/mkrsrc` writes a `.syso` file for each program and each architecture (`cmd/*/rsrc_windows_amd64.syso` and `rsrc_windows_arm64.syso`). It is a COFF object with a `.rsrc` section that holds an RT_GROUP_ICON with the ID 1, one RT_ICON for every frame in `assets/logo/png` up to 256 px (a bitmap for the small ones, the PNG file itself for 256 px), and an RT_VERSION. The Go linker links the file by itself, so every build has them. `scripts\resources.ps1 -Version <version>` regenerates the four files, and `scripts\logo-frames.ps1` renders the frames from the SVG (ADR 0006). There is no manifest.
 
 ### Logging
 
@@ -141,7 +155,8 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 - Whether the reconnect request needs administrator rights. Listing was verified in a process that is not elevated. It is not known whether the terminal of the one real run was elevated.
 - What the calls return, and how long they block, for a device that is out of reach.
 - Whether `Connected` matches the state Windows Settings shows ("Connected audio").
-- The Connect and Cancel buttons of the window against a real device. They were exercised in demo mode only; with real devices the window was started and closed, and it listed the devices.
+- The Connect, Cancel, and Disconnect buttons of the window against a real device. They were exercised in demo mode only; with real devices the window was started and closed, and it listed the devices.
+- Disconnect on a connected device: whether the request drops the link at once, how long Windows takes to report it, and whether the speaker or the earbuds connect again by themselves. The request was sent only for earbuds that were not connected (ADR 0007).
 - Whether Windows reports no radio (`bt.ErrNoRadio`) while Bluetooth is turned off. It was not tried, because turning Bluetooth off disconnects the devices in use.
 - A PC with more than one Bluetooth radio.
 
@@ -151,7 +166,7 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 
 ## BlueLatch 架构
 
-本文档描述 0.1.1 版中已实现的内容。计划中的内容会标明是计划。
+本文档描述 0.1.2 版中已实现的内容。计划中的内容会标明是计划。
 
 ### 概览
 
@@ -176,7 +191,7 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 | 包 | 职责 |
 |---|---|
-| `cmd/bluelatch` | 命令 `list`、`connect`、`version`。找出用户指定的设备，并打印引擎的进度。 |
+| `cmd/bluelatch` | 命令 `list`、`connect`、`disconnect`、`version`。找出用户指定的设备，并打印引擎的进度。 |
 | `cmd/bluelatch-gui` | 窗口程序：参数、单实例、启动时的修复，然后调用 `ui.Run`。 |
 | `internal/ui` | WebView2 窗口及其页面（`web/index.html`，已嵌入）。 |
 | `internal/app` | 窗口显示和执行的内容：已配对音频设备的列表（保持刷新），以及至多一个连接任务。还有演示用的 adapter。 |
@@ -184,6 +199,8 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 | `internal/bt` | 类型（`Device`、`Address`、`Service`、`ClassOfDevice`）、`Adapter` 接口、`Find`、待恢复记录，以及该接口的 Windows 实现。 |
 | `internal/logging` | 日志文件。 |
 | `internal/appdir` | 文件夹 `%LocalAppData%\BlueLatch`。 |
+| `assets/logo` | 图标的源文件（`bluelatch.svg`）及其 PNG 帧。 |
+| `tools/mkrsrc` | 写出让程序拥有图标和版本信息的 `.syso` 文件。只用标准库。 |
 
 ### 读取设备
 
@@ -214,6 +231,12 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 3. 返回每个服务的处理结果。只有一个服务都没能启用时才算错误。错误为 nil 并不表示设备已连接。
 
 这个调用是同步的，不能被中断（ADR 0001）。在一台音箱上观察到一次：关闭约 3.1 秒，打开约 3.3 秒，所以一个请求约 6.5 秒。服务关闭期间，它不在已安装服务列表中。
+
+### 断开请求
+
+`Adapter.Disconnect` 用 `DeviceIoControl` 向认识该设备的适配器的句柄发送 `IOCTL_BTH_DISCONNECT_DEVICE`（`0x0041000C`），输入是设备的 64 位地址。它断开基带连接；配对和服务保持不变（ADR 0007）。Windows 对未连接的设备返回 `ERROR_DEVICE_NOT_CONNECTED`（1167），它会变成 `bt.ErrNotConnected`。不会把其他错误码当作它。
+
+`Engine.Disconnect` 先读取设备。设备未连接时，如实报告（`bt.ErrNotConnected`），什么也不发送。否则发出请求，并每隔 `PollInterval` 读取一次设备，直到 Windows 报告它已断开（成功），或 `DisconnectTimeout`（5 秒）过去（`ErrStillConnected`）。请求会立即返回，也不关闭任何东西，所以不需要待恢复记录，停止等待也不会留下做到一半的事。
 
 ### 待恢复记录
 
@@ -254,10 +277,10 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 - `devices`：已配对的音频设备，含名称、地址、类型（`headphones`、`headset`、`speaker`、`audio`，由次要类别得出），以及是否已连接。
 - `problem`：无法读取设备时为 `no-radio`，或带文本的 `error`。问题发生变化时才记录日志，而不是每次读取都记录。
-- `job`：正在重试的连接，或最近一次的连接：设备、阶段（`starting`、`reconnecting`、`waiting`、`backoff`、`cancelling`、`connected`、`cancelled`、`failed`）、尝试次数、开始时间、下一次尝试的时间、Windows 所做操作的详情、错误，以及错误码（`no-radio`、`not-paired`、`no-services`、`gave-up`）。
+- `job`：正在重试或正在断开的连接，或最近一次的：种类（`connect` 或 `disconnect`）、设备、阶段（连接用 `starting`、`reconnecting`、`waiting`、`backoff`、`cancelling`、`connected`；断开用 `disconnecting`、`disconnected`；两者都可能是 `cancelled` 和 `failed`）、尝试次数、开始时间、下一次尝试的时间、Windows 所做操作的详情、错误，以及错误码（`no-radio`、`not-paired`、`no-services`、`gave-up`、`still-connected`）。
 - `closing`：程序正在关闭。
 
-`Connect` 启动一个任务并立即返回。同一时间只运行一个任务（`ErrBusy`）。`Cancel` 把任务标记为 `cancelling` 并取消它的上下文。`Shutdown(timeout)` 取消任务和读取，并等待 Windows 正在处理的请求；超时后返回 false。`NewDemo` 是带虚构设备的 adapter，用于试用窗口。
+`Connect` 和 `Disconnect` 启动一个任务并立即返回。同一时间只运行一个任务（`ErrBusy`），不论哪种。断开时发现设备并未连接，也算完成。`Cancel` 把任务标记为 `cancelling` 并取消它的上下文。`Shutdown(timeout)` 取消任务和读取，并等待 Windows 正在处理的请求；超时后返回 false。`NewDemo` 是带虚构设备的 adapter，用于试用窗口。
 
 ### 窗口
 
@@ -270,15 +293,21 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 | `-debug` | 打开开发者工具和右键菜单。 |
 | `-demo` | 使用 `app.NewDemo` 的虚构设备，不触碰任何真实设备。标题为 "BlueLatch (demo)"。 |
 | `-demo-connect NAME` | 与 `-demo` 一起使用，启动 1.5 秒后开始连接该设备。 |
+| `-demo-disconnect NAME` | 与 `-demo` 一起使用，启动 1.5 秒后开始断开该设备。 |
 
 `ui.Run` 使用 `github.com/jchv/go-webview2`（ADR 0003）：
 
 - 页面是 `web/index.html`，嵌入在可执行文件中。它不从外部加载任何内容（内容安全策略），并且以文本方式设置设备名称。
-- 绑定了三个函数：`blState()`、`blConnect(address)`、`blCancel()`。它们都立即返回。页面每 500 毫秒调用一次 `blState`，根据状态绘制卡片；另一个定时器更新已用时间和倒计时。已结束的任务在 8 秒后从卡片上消失（失败的是 30 秒）。
+- 绑定了四个函数：`blState()`、`blConnect(address)`、`blDisconnect(address)`、`blCancel()`。它们都立即返回。页面每 500 毫秒调用一次 `blState`，根据状态绘制卡片；另一个定时器更新已用时间和倒计时。已结束的任务在 8 秒后从卡片上消失（失败的是 30 秒）。
+- 每张卡片有一个按钮：该设备正在连接时是 Cancel，已连接时是 Disconnect，其他情况是 Connect。有任务运行时，其他卡片的按钮被禁用。页面头部显示图标，标题栏和任务栏按钮则按窗口所在的 DPI 取程序图标中合适的尺寸（`setWindowIcons`）。
 - 页面跟随 Windows 的深色或浅色主题。当用户的应用使用深色主题时，标题栏切换为深色。进程是 per-monitor DPI 感知的，窗口按系统 DPI 缩放。WebView2 的数据保存在 `%LocalAppData%\BlueLatch\WebView2`。
 - 页面会阻止刷新（F5、Ctrl+R）、打印、保存、查找、缩放和拖入文件，因为页面是从字符串加载的，刷新会让它变空。
 - 关闭窗口：第一个 `WM_CLOSE` 调用 `App.Shutdown`（最多 30 秒）并被忽略；它返回之后，窗口才真正关闭。因此 Windows 正在处理的请求总会执行到结束。
 - 窗口无法创建时（通常是缺少 WebView2 运行时），会弹出一个消息框，其中给出下载页面。
+
+### 图标和版本信息
+
+`tools/mkrsrc` 为每个程序和每种架构写出一个 `.syso` 文件（`cmd/*/rsrc_windows_amd64.syso` 和 `rsrc_windows_arm64.syso`）。它是带有 `.rsrc` 节的 COFF 目标文件，其中包含 ID 为 1 的 RT_GROUP_ICON，`assets/logo/png` 中每个不超过 256 像素的帧各对应一个 RT_ICON（小尺寸用位图，256 像素用 PNG 文件本身），以及一个 RT_VERSION。Go 链接器会自动链接这个文件，所以每次构建都带有它们。`scripts\resources.ps1 -Version <version>` 重新生成这四个文件，`scripts\logo-frames.ps1` 从 SVG 渲染出这些帧（ADR 0006）。没有 manifest。
 
 ### 日志
 
@@ -290,6 +319,7 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 - 重新连接请求是否需要管理员权限。列出设备已在未提权的进程中验证过。那次真实运行所用的终端是否已提权，不得而知。
 - 设备够不着时，这些调用返回什么、阻塞多久。
 - `Connected` 是否与 Windows 设置显示的状态（"Connected audio"）一致。
-- 窗口的 Connect 和 Cancel 按钮对真实设备的效果。它们只在演示模式下试过；对真实设备，窗口只做过启动和关闭，并列出了设备。
+- 窗口的 Connect、Cancel 和 Disconnect 按钮对真实设备的效果。它们只在演示模式下试过；对真实设备，窗口只做过启动和关闭，并列出了设备。
+- 在已连接的设备上执行 Disconnect：请求是否会立刻断开链路，Windows 要多久才报告，以及音箱和耳塞是否会自己再连上。该请求只对未连接的耳塞发送过（ADR 0007）。
 - 蓝牙关闭时 Windows 是否报告没有适配器（`bt.ErrNoRadio`）。没有试过，因为关闭蓝牙会断开正在使用的设备。
 - 有多个蓝牙适配器的电脑。

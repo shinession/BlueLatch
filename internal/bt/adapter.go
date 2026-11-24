@@ -17,6 +17,10 @@ var (
 	// ErrNoAudioServices means no audio service is installed for the device, so
 	// there is nothing to reconnect.
 	ErrNoAudioServices = errors.New("the device has no installed audio service")
+
+	// ErrNotConnected means the device is not connected, so there is nothing to
+	// disconnect.
+	ErrNotConnected = errors.New("the device is not connected")
 )
 
 // ServiceResult is the outcome of switching one service off and on again.
@@ -68,6 +72,14 @@ type Adapter interface {
 	// stopping in between would leave that service switched off. A nil error
 	// does not mean the device is connected; read it with Device.
 	Reconnect(addr Address) (ReconnectResult, error)
+
+	// Disconnect drops the connection to the device, like the Disconnect command
+	// of Windows Settings. The device stays paired and its services stay
+	// switched on, so it can be connected again. It returns ErrNotConnected when
+	// the device has no connection. Whether the device connects again by itself
+	// is up to the device. Windows may take a moment to report the change, so
+	// read the device afterwards.
+	Disconnect(addr Address) error
 }
 
 // Restored is a service that Recover switched on again.

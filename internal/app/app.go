@@ -26,16 +26,26 @@ var (
 	ErrClosing = errors.New("the program is closing")
 )
 
-// Phases of a job, as the window sees them.
+// The kinds of job: retrying a connection, and dropping one.
 const (
-	PhaseStarting     = "starting"
-	PhaseReconnecting = "reconnecting"
-	PhaseWaiting      = "waiting"
-	PhaseBackoff      = "backoff"
-	PhaseCancelling   = "cancelling"
-	PhaseConnected    = "connected"
-	PhaseCancelled    = "cancelled"
-	PhaseFailed       = "failed"
+	KindConnect    = "connect"
+	KindDisconnect = "disconnect"
+)
+
+// Phases of a job, as the window sees them. A connection job goes through
+// starting, reconnecting, waiting and backoff to connected; a disconnection job
+// goes from disconnecting to disconnected. Both can end as cancelled or failed.
+const (
+	PhaseStarting      = "starting"
+	PhaseReconnecting  = "reconnecting"
+	PhaseWaiting       = "waiting"
+	PhaseBackoff       = "backoff"
+	PhaseCancelling    = "cancelling"
+	PhaseConnected     = "connected"
+	PhaseDisconnecting = "disconnecting"
+	PhaseDisconnected  = "disconnected"
+	PhaseCancelled     = "cancelled"
+	PhaseFailed        = "failed"
 )
 
 // State is everything the window shows. It is rendered as JSON.
@@ -61,8 +71,10 @@ type Problem struct {
 	Text string `json:"text,omitempty"` // what Windows said, for error
 }
 
-// JobView is a connection that is being retried, or that has just ended.
+// JobView is a connection that is being retried or a connection that is being
+// dropped, or the one that has just ended.
 type JobView struct {
+	Kind    string `json:"kind"` // connect or disconnect
 	Address string `json:"address"`
 	Name    string `json:"name"`
 	Phase   string `json:"phase"`
@@ -75,7 +87,7 @@ type JobView struct {
 
 	Detail    string `json:"detail,omitempty"`    // what Windows did with each service
 	Error     string `json:"error,omitempty"`     // why the last attempt, or the job, failed
-	ErrorCode string `json:"errorCode,omitempty"` // no-radio, not-paired, no-services or gave-up
+	ErrorCode string `json:"errorCode,omitempty"` // no-radio, not-paired, no-services, gave-up or still-connected
 	Done      bool   `json:"done"`
 }
 
@@ -161,7 +173,8 @@ func (a *App) Snapshot() State {
 	return s
 }
 
-// Busy reports whether a connection is being retried.
+// Busy reports whether a job is running: a connection being retried, or one
+// being dropped.
 func (a *App) Busy() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -171,18 +184,42 @@ func (a *App) Busy() bool {
 // Connect starts retrying the connection of the device with that address. It
 // returns at once; Snapshot shows the progress.
 func (a *App) Connect(address string) error {
-	addr, err := bt.ParseAddress(address)
+	j, ctx, addr, err := a.begin(address, KindConnect, PhaseStarting)
 	if err != nil {
 		return err
+	}
+	go a.run(ctx, j, addr)
+	return nil
+}
+
+// Disconnect drops the connection to the device with that address, and waits for
+// Windows to report it. It returns at once; Snapshot shows the progress. The
+// device stays paired, so it can be connected again.
+func (a *App) Disconnect(address string) error {
+	j, ctx, addr, err := a.begin(address, KindDisconnect, PhaseDisconnecting)
+	if err != nil {
+		return err
+	}
+	go a.runDisconnect(ctx, j, addr)
+	return nil
+}
+
+// begin checks a request for a job and creates the job. Only one job runs at a
+// time, and only for a device in the list. The caller starts the goroutine that
+// runs the job, which must call a.wg.Done when it ends.
+func (a *App) begin(address, kind, phase string) (*job, context.Context, bt.Address, error) {
+	addr, err := bt.ParseAddress(address)
+	if err != nil {
+		return nil, nil, 0, err
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closing {
-		return ErrClosing
+		return nil, nil, 0, ErrClosing
 	}
 	if a.job != nil && !a.job.view.Done {
-		return ErrBusy
+		return nil, nil, 0, ErrBusy
 	}
 	var dev *DeviceView
 	for i := range a.devices {
@@ -192,23 +229,23 @@ func (a *App) Connect(address string) error {
 		}
 	}
 	if dev == nil {
-		return ErrUnknownDevice
+		return nil, nil, 0, ErrUnknownDevice
 	}
 
 	ctx, cancel := context.WithCancel(a.ctx)
 	j := &job{
 		cancel: cancel,
 		view: JobView{
+			Kind:      kind,
 			Address:   dev.Address,
 			Name:      dev.Name,
-			Phase:     PhaseStarting,
+			Phase:     phase,
 			StartedAt: a.now().UnixMilli(),
 		},
 	}
 	a.job = j
 	a.wg.Add(1)
-	go a.run(ctx, j, addr)
-	return nil
+	return j, ctx, addr, nil
 }
 
 // Cancel stops the connection that is being retried. A request that Windows is
@@ -327,6 +364,31 @@ func (a *App) run(ctx context.Context, j *job, addr bt.Address) {
 	a.RefreshNow()
 }
 
+// runDisconnect drops one connection and records how it went.
+func (a *App) runDisconnect(ctx context.Context, j *job, addr bt.Address) {
+	defer a.wg.Done()
+	engine := latch.New(a.cfg.Adapter, a.cfg.Policy, a.log)
+	err := engine.Disconnect(ctx, addr)
+
+	a.mu.Lock()
+	v := &j.view
+	v.Done = true
+	v.DoneAt = a.now().UnixMilli()
+	v.Elapsed = v.DoneAt - v.StartedAt
+	switch {
+	case err == nil, errors.Is(err, bt.ErrNotConnected): // either way, it is disconnected
+		v.Phase = PhaseDisconnected
+	case errors.Is(err, context.Canceled):
+		v.Phase = PhaseCancelled
+	default:
+		v.Phase = PhaseFailed
+		v.Error = err.Error()
+		v.ErrorCode = errorCode(err)
+	}
+	a.mu.Unlock()
+	a.RefreshNow()
+}
+
 // progress records what the engine reports.
 func (a *App) progress(j *job, p latch.Progress) {
 	a.mu.Lock()
@@ -387,6 +449,8 @@ func errorCode(err error) string {
 		return "no-services"
 	case errors.Is(err, latch.ErrGaveUp):
 		return "gave-up"
+	case errors.Is(err, latch.ErrStillConnected):
+		return "still-connected"
 	}
 	return ""
 }

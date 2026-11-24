@@ -110,7 +110,7 @@ func pickAudioDevice(devices []bt.Device, query string) (bt.Device, error) {
 		return dev, nil
 	}
 	if other, otherErr := bt.Find(paired, query); otherErr == nil {
-		return bt.Device{}, fmt.Errorf("%s (%s) is paired but is not an audio device; BlueLatch reconnects classic Bluetooth audio devices only", other.DisplayName(), other.Address)
+		return bt.Device{}, fmt.Errorf("%s (%s) is paired but is not an audio device; BlueLatch handles classic Bluetooth audio devices only", other.DisplayName(), other.Address)
 	}
 	return bt.Device{}, err
 }

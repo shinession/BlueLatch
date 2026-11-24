@@ -22,6 +22,7 @@ the connection holds.
 Usage:
   bluelatch list [-all] [-v]
   bluelatch connect [-v] [-attempt-timeout 10s] [-stable 2s] [-max-attempts N] <name or address>
+  bluelatch disconnect [-v] [-wait 5s] <name or address>
   bluelatch version
 
 Run "bluelatch <command> -h" for the flags of a command.
@@ -62,6 +63,8 @@ func (c *cli) run(args []string) int {
 		return c.list(args[1:])
 	case "connect":
 		return c.connect(args[1:])
+	case "disconnect":
+		return c.disconnect(args[1:])
 	case "version", "-version", "--version":
 		fmt.Fprintf(c.stdout, "bluelatch %s (%s %s/%s)\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return 0

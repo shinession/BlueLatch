@@ -62,6 +62,7 @@ func Run(a *app.App, opt Options) error {
 			Title:  opt.Title,
 			Width:  uint(float64(clientWidth+16) * scale),
 			Height: uint(float64(clientHeight+39) * scale),
+			IconId: programIconID,
 			Center: true,
 		},
 	})
@@ -73,6 +74,7 @@ func Run(a *app.App, opt Options) error {
 	w.SetSize(int(float64(minWidth)*scale), int(float64(minHeight)*scale), webview2.HintMin)
 
 	hwnd := uintptr(w.Window())
+	setWindowIcons(hwnd)
 	applyDarkTitleBar(hwnd)
 	installCloseGuard(hwnd, a, w, opt.Log)
 
@@ -82,6 +84,9 @@ func Run(a *app.App, opt Options) error {
 		return err
 	}
 	if err := w.Bind("blConnect", func(address string) error { return a.Connect(address) }); err != nil {
+		return err
+	}
+	if err := w.Bind("blDisconnect", func(address string) error { return a.Disconnect(address) }); err != nil {
 		return err
 	}
 	if err := w.Bind("blCancel", func() { a.Cancel() }); err != nil {

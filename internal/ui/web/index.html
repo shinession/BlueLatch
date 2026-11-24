@@ -63,7 +63,9 @@ body {
 }
 main { max-width: 600px; margin: 0 auto; padding: 22px 20px 16px; min-height: 100%; display: flex; flex-direction: column; }
 h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
-.tagline { margin: 4px 0 18px; color: var(--muted); }
+.brand { display: flex; align-items: center; gap: 16px; margin: 0 0 18px; }
+.brand .mark { width: 56px; height: 56px; flex: none; }
+.tagline { margin: 2px 0 0; color: var(--muted); }
 
 #banner { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px; border-left: 4px solid; }
 #banner[hidden] { display: none; }
@@ -117,6 +119,7 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: 0.35; } }
 .card.active .dot { background: var(--warn); border-color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+.card.active .status { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; border-top-color: var(--btn-border); }
   .card.active .dot { animation: none; }
@@ -125,8 +128,29 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
 </head>
 <body>
 <main>
-  <h1>BlueLatch</h1>
-  <p class="tagline" id="tagline"></p>
+  <header class="brand">
+    <!-- The icon of the program (assets/logo/bluelatch.svg), without the shadow and the gloss, which do not show at this size. -->
+    <svg class="mark" viewBox="0 0 256 256" aria-hidden="true">
+      <defs>
+        <linearGradient id="blTile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1a2b5c"/><stop offset="1" stop-color="#090f26"/></linearGradient>
+        <radialGradient id="blGlow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#3aa0ff" stop-opacity=".42"/><stop offset="1" stop-color="#3aa0ff" stop-opacity="0"/></radialGradient>
+        <linearGradient id="blLeft" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8af0ff"/><stop offset="1" stop-color="#38a2ff"/></linearGradient>
+        <linearGradient id="blRight" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5a92ff"/><stop offset="1" stop-color="#2146d6"/></linearGradient>
+        <rect id="blGem" x="-65" y="-65" width="130" height="130" rx="26" transform="translate(128 128) rotate(45)"/>
+        <clipPath id="blL"><path d="M0 0H125V105.9L151 117.9V138.1L125 150.1V256H0Z"/></clipPath>
+        <clipPath id="blR"><path d="M256 0H131V102.1L157 114.1V141.9L131 153.9V256H256Z"/></clipPath>
+      </defs>
+      <rect x="6" y="6" width="244" height="244" rx="58" fill="url(#blTile)"/>
+      <rect x="6" y="6" width="244" height="244" rx="58" fill="url(#blGlow)"/>
+      <rect x="7" y="7" width="242" height="242" rx="57" fill="none" stroke="#4a68b4" stroke-opacity=".55" stroke-width="2"/>
+      <use href="#blGem" fill="url(#blLeft)" clip-path="url(#blL)"/>
+      <use href="#blGem" fill="url(#blRight)" clip-path="url(#blR)"/>
+    </svg>
+    <div>
+      <h1>BlueLatch</h1>
+      <p class="tagline" id="tagline"></p>
+    </div>
+  </header>
   <div id="banner" role="status" aria-live="polite" hidden></div>
   <ul id="devices"></ul>
   <p id="empty" hidden></p>
@@ -139,7 +163,12 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     en: {
       tagline: 'Connects a paired Bluetooth audio device and keeps retrying until the connection holds.',
       connected: 'Connected', disconnected: 'Not connected', connecting: 'Connecting…', connect: 'Connect', cancel: 'Cancel',
-      busy: 'Another device is being connected.',
+      disconnect: 'Disconnect', disconnecting: 'Disconnecting…',
+      busy: 'Wait for the current action to finish.',
+      askDisconnect: 'Asking Windows to disconnect the device…',
+      doneDisconnected: 'Disconnected. The device stays paired.',
+      doneDisconnectFailed: 'Could not disconnect: {e}',
+      doneStopped: 'Stopped.',
       starting: 'Starting…',
       reconnecting: 'Attempt {n}: asking Windows to connect…',
       waiting: 'Attempt {n}: waiting for the link…',
@@ -161,13 +190,19 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
         'no-radio': 'No Bluetooth radio found. Turn Bluetooth on.',
         'not-paired': 'The device is not paired any more. Pair it again in Windows Settings.',
         'no-services': 'Windows has no audio service installed for this device. Remove it in Windows Settings and pair it again.',
-        'gave-up': 'Gave up after the maximum number of attempts.'
+        'gave-up': 'Gave up after the maximum number of attempts.',
+        'still-connected': 'The device still reports being connected. It may have connected again by itself.'
       }
     },
     zh: {
       tagline: '连接已配对的蓝牙音频设备，并不断重试，直到连接稳定。',
       connected: '已连接', disconnected: '未连接', connecting: '正在连接…', connect: '连接', cancel: '取消',
-      busy: '正在连接另一个设备。',
+      disconnect: '断开', disconnecting: '正在断开…',
+      busy: '请等待当前操作完成。',
+      askDisconnect: '正在请求 Windows 断开设备…',
+      doneDisconnected: '已断开，设备仍保持配对。',
+      doneDisconnectFailed: '无法断开：{e}',
+      doneStopped: '已停止。',
       starting: '正在开始…',
       reconnecting: '第 {n} 次尝试：正在请求 Windows 连接…',
       waiting: '第 {n} 次尝试：等待连接建立…',
@@ -189,7 +224,8 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
         'no-radio': '未找到蓝牙适配器。请打开蓝牙。',
         'not-paired': '该设备已不再配对。请在 Windows 设置中重新配对。',
         'no-services': 'Windows 没有为该设备安装音频服务。请在 Windows 设置中删除该设备并重新配对。',
-        'gave-up': '已达到最大尝试次数，已放弃。'
+        'gave-up': '已达到最大尝试次数，已放弃。',
+        'still-connected': '设备仍显示为已连接，它可能自己又连上了。'
       }
     }
   };
@@ -249,8 +285,10 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
       case 'backoff': text = t('backoff', { n: n + 1, s: Math.max(0, Math.ceil((job.nextAt - now) / 1000)) }); break;
       case 'cancelling': text = t('cancelling'); break;
       case 'connected': text = n === 0 ? t('doneConnectedNow') : t('doneConnected', { n: n, t: fmtDuration(job.elapsed) }); break;
-      case 'cancelled': text = t('doneCancelled', { n: n }); break;
-      case 'failed': text = t('doneFailed', { e: friendlyError(job) }); break;
+      case 'disconnecting': text = t('askDisconnect'); break;
+      case 'disconnected': text = t('doneDisconnected'); break;
+      case 'cancelled': text = job.kind === 'disconnect' ? t('doneStopped') : t('doneCancelled', { n: n }); break;
+      case 'failed': text = t(job.kind === 'disconnect' ? 'doneDisconnectFailed' : 'doneFailed', { e: friendlyError(job) }); break;
       default: text = '';
     }
     if (!job.done) { text += '  ·  ' + fmtDuration(now - job.startedAt); }
@@ -300,13 +338,18 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     return c;
   }
 
+  // The button of a card cancels the connection that is being retried, drops the
+  // connection of a connected device, or connects a device that is not connected.
   function onButton(c) {
     if (!state) { return; }
-    if (running(state.job) && state.job.address === c.address) {
+    var job = state.job;
+    if (running(job) && job.address === c.address && job.kind !== 'disconnect') {
       window.blCancel().then(poll, showNotice);
-    } else {
-      window.blConnect(c.address).then(poll, function (e) { showNotice(e); poll(); });
+      return;
     }
+    var dev = (state.devices || []).filter(function (d) { return d.address === c.address; })[0];
+    var act = dev && dev.connected ? window.blDisconnect : window.blConnect;
+    act(c.address).then(poll, function (e) { showNotice(e); poll(); });
   }
 
   function showNotice(e) {
@@ -318,19 +361,26 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
   function updateCard(c, d, job, now, closing) {
     var mine = visible(job, now) && job.address === d.address;
     var active = mine && running(job);
+    var dropping = active && job.kind === 'disconnect';
+    var retrying = active && !dropping;
     c.li.className = 'card' + (d.connected ? ' connected' : '') + (active ? ' active' : '');
     if (c.kind !== d.kind) { c.kind = d.kind; c.icon.innerHTML = ICONS[d.kind] || ICONS.audio; }
     setText(c.name, d.name);
-    setText(c.stateText, active ? t('connecting') : (d.connected ? t('connected') : t('disconnected')));
+    setText(c.stateText, retrying ? t('connecting') : (dropping ? t('disconnecting') : (d.connected ? t('connected') : t('disconnected'))));
 
-    // The button: Cancel for the job of this card, Connect for the others, none for a connected device.
+    // The button: Cancel while this card is being connected, Disconnect for a connected
+    // device, Connect for the others. Nothing else can start while a job runs.
     var anyRunning = running(job);
-    c.action.hidden = d.connected && !active;
-    if (active) {
+    if (retrying) {
       setText(c.btn, t('cancel'));
       c.btn.className = 'btn';
       c.btn.disabled = job.phase === 'cancelling' || closing;
       c.btn.title = '';
+    } else if (dropping || d.connected) {
+      setText(c.btn, t('disconnect'));
+      c.btn.className = 'btn';
+      c.btn.disabled = dropping || anyRunning || closing;
+      c.btn.title = !dropping && anyRunning ? t('busy') : '';
     } else {
       setText(c.btn, t('connect'));
       c.btn.className = 'btn primary';

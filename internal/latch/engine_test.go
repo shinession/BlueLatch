@@ -48,6 +48,30 @@ type fakeAdapter struct {
 
 	// deviceErr, when set, is asked before every read of the device.
 	deviceErr func(a *fakeAdapter) error
+
+	disconnects int
+
+	// onDisconnect, when set, replaces the default Disconnect, which ends the
+	// connection at once.
+	onDisconnect func(a *fakeAdapter) error
+}
+
+func (a *fakeAdapter) Disconnect(bt.Address) error {
+	a.disconnects++
+	if a.onDisconnect != nil {
+		return a.onDisconnect(a)
+	}
+	a.endLinks(a.clock.Now())
+	return nil
+}
+
+// endLinks ends, at the given time, every period of connection that is still open.
+func (a *fakeAdapter) endLinks(at time.Time) {
+	for i := range a.up {
+		if a.up[i].to.IsZero() {
+			a.up[i].to = at
+		}
+	}
 }
 
 func (a *fakeAdapter) Devices() ([]bt.Device, error) { return []bt.Device{a.current()}, nil }
@@ -378,6 +402,130 @@ func TestConnectFailsWhenTheDeviceCannotBeRead(t *testing.T) {
 	}
 	if res.Attempts != 0 || a.reconnects != 0 {
 		t.Errorf("attempts = %d, Reconnect calls = %d; want none", res.Attempts, a.reconnects)
+	}
+}
+
+func connectedFake() *fakeAdapter {
+	a := newFake()
+	a.up = []span{{from: a.clock.Now()}}
+	return a
+}
+
+func TestDisconnectDropsTheLinkAndConfirmsIt(t *testing.T) {
+	a := connectedFake()
+	start := a.clock.Now()
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if a.disconnects != 1 {
+		t.Errorf("Disconnect requests = %d, want 1", a.disconnects)
+	}
+	if waited := a.clock.Now().Sub(start); waited != 0 {
+		t.Errorf("waited %v, want no wait: Windows reported the change at once", waited)
+	}
+}
+
+func TestDisconnectWaitsForWindowsToReportTheChange(t *testing.T) {
+	a := connectedFake()
+	a.onDisconnect = func(a *fakeAdapter) error {
+		a.endLinks(a.clock.Now().Add(1200 * time.Millisecond))
+		return nil
+	}
+	start := a.clock.Now()
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	// Reads at 0, 0.5 and 1.0 s still say connected; the one at 1.5 s does not.
+	if waited := a.clock.Now().Sub(start); waited != 1500*time.Millisecond {
+		t.Errorf("waited %v, want 1.5s", waited)
+	}
+}
+
+func TestDisconnectGivesUpWhenTheDeviceStaysConnected(t *testing.T) {
+	a := connectedFake()
+	a.onDisconnect = func(*fakeAdapter) error { return nil } // accepted, but nothing changes
+	start := a.clock.Now()
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if !errors.Is(err, ErrStillConnected) {
+		t.Fatalf("error = %v, want ErrStillConnected", err)
+	}
+	if waited := a.clock.Now().Sub(start); waited != 5*time.Second {
+		t.Errorf("waited %v, want Policy.DisconnectTimeout (5s)", waited)
+	}
+}
+
+func TestDisconnectLeavesADisconnectedDeviceAlone(t *testing.T) {
+	a := newFake()
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if !errors.Is(err, bt.ErrNotConnected) {
+		t.Fatalf("error = %v, want bt.ErrNotConnected", err)
+	}
+	if a.disconnects != 0 {
+		t.Errorf("Disconnect requests = %d, want none for a device that is not connected", a.disconnects)
+	}
+}
+
+func TestDisconnectReportsALostRaceAsNotConnected(t *testing.T) {
+	a := connectedFake()
+	a.onDisconnect = func(*fakeAdapter) error { return bt.ErrNotConnected }
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if !errors.Is(err, bt.ErrNotConnected) {
+		t.Errorf("error = %v, want bt.ErrNotConnected", err)
+	}
+}
+
+func TestDisconnectReportsOtherErrors(t *testing.T) {
+	a := connectedFake()
+	boom := errors.New("boom")
+	a.onDisconnect = func(*fakeAdapter) error { return boom }
+	start := a.clock.Now()
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the error of the request", err)
+	}
+	if !a.clock.Now().Equal(start) {
+		t.Error("Disconnect waited after the request failed")
+	}
+}
+
+func TestDisconnectStopsWaitingWhenCancelled(t *testing.T) {
+	a := connectedFake()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.onDisconnect = func(*fakeAdapter) error {
+		cancel()
+		return nil // accepted, but the device still reports being connected
+	}
+
+	err := a.engine(DefaultPolicy()).Disconnect(ctx, 1)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestDisconnectFailsWhenTheDeviceCannotBeRead(t *testing.T) {
+	a := connectedFake()
+	a.deviceErr = func(*fakeAdapter) error { return bt.ErrNoRadio }
+
+	err := a.engine(DefaultPolicy()).Disconnect(context.Background(), 1)
+
+	if !errors.Is(err, bt.ErrNoRadio) || a.disconnects != 0 {
+		t.Errorf("error = %v after %d requests; want bt.ErrNoRadio and no request", err, a.disconnects)
 	}
 }
 

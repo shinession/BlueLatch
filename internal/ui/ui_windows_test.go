@@ -8,7 +8,7 @@ import (
 )
 
 func TestThePageIsEmbeddedAndTalksToTheBoundFunctions(t *testing.T) {
-	for _, want := range []string{"<title>BlueLatch</title>", "blState", "blConnect", "blCancel", "Content-Security-Policy"} {
+	for _, want := range []string{"<title>BlueLatch</title>", "blState", "blConnect", "blDisconnect", "blCancel", "Content-Security-Policy"} {
 		if !strings.Contains(indexHTML, want) {
 			t.Errorf("the embedded page lacks %q", want)
 		}

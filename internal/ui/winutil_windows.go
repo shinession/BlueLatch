@@ -22,6 +22,11 @@ var (
 
 	procSetProcessDpiAwarenessContext = user32.NewProc("SetProcessDpiAwarenessContext")
 	procGetDpiForSystem               = user32.NewProc("GetDpiForSystem")
+	procGetDpiForWindow               = user32.NewProc("GetDpiForWindow")
+	procGetSystemMetrics              = user32.NewProc("GetSystemMetrics")
+	procGetSystemMetricsForDpi        = user32.NewProc("GetSystemMetricsForDpi")
+	procLoadImage                     = user32.NewProc("LoadImageW")
+	procSendMessage                   = user32.NewProc("SendMessageW")
 	procSetWindowLongPtr              = user32.NewProc("SetWindowLongPtrW")
 	procCallWindowProc                = user32.NewProc("CallWindowProcW")
 	procFindWindow                    = user32.NewProc("FindWindowW")
@@ -32,8 +37,19 @@ var (
 
 const (
 	wmClose     = 0x0010
+	wmSetIcon   = 0x0080
 	gwlpWndProc = ^uintptr(3) // -4
 	swRestore   = 9
+
+	iconSmall  = 0  // ICON_SMALL: the icon of the title bar
+	iconBig    = 1  // ICON_BIG: the icon of the taskbar and of Alt+Tab
+	imageIcon  = 1  // IMAGE_ICON
+	smCxIcon   = 11 // SM_CXICON
+	smCxSmIcon = 49 // SM_CXSMICON
+
+	// programIconID is the ID of the icon group that tools/mkrsrc writes into the
+	// resources of the program.
+	programIconID = 1
 
 	// dpiAwarenessPerMonitorV2 is DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, -4.
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
@@ -62,6 +78,38 @@ func systemDPIScale() float64 {
 		return 1
 	}
 	return float64(dpi) / 96
+}
+
+// setWindowIcons gives the window the icon of the program in the two sizes that
+// Windows shows at the DPI of the window: the small one for the title bar and the
+// big one for the taskbar. The binding sets one size, which Windows then scales.
+// A program built without the resources has no icon to load, and keeps the
+// default one.
+func setWindowIcons(hwnd uintptr) {
+	var module windows.Handle
+	if err := windows.GetModuleHandleEx(0, nil, &module); err != nil {
+		return
+	}
+	dpi := uintptr(96)
+	if procGetDpiForWindow.Find() == nil {
+		if d, _, _ := procGetDpiForWindow.Call(hwnd); d != 0 {
+			dpi = d
+		}
+	}
+	for _, icon := range []struct{ which, metric uintptr }{{iconSmall, smCxSmIcon}, {iconBig, smCxIcon}} {
+		var size uintptr
+		if procGetSystemMetricsForDpi.Find() == nil {
+			size, _, _ = procGetSystemMetricsForDpi.Call(icon.metric, dpi)
+		} else {
+			size, _, _ = procGetSystemMetrics.Call(icon.metric)
+		}
+		if size == 0 {
+			continue
+		}
+		if handle, _, _ := procLoadImage.Call(uintptr(module), programIconID, imageIcon, size, size, 0); handle != 0 {
+			procSendMessage.Call(hwnd, wmSetIcon, icon.which, handle)
+		}
+	}
 }
 
 // applyDarkTitleBar gives the title bar the dark theme when the apps of the user

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -146,6 +147,35 @@ func (a *winAdapter) Reconnect(addr Address) (ReconnectResult, error) {
 		return result, fmt.Errorf("no audio service could be enabled: %s", result)
 	}
 	return result, nil
+}
+
+func (a *winAdapter) Disconnect(addr Address) error {
+	radios, err := openRadios()
+	if err != nil {
+		return err
+	}
+	defer closeRadios(radios)
+
+	rd, info, err := findDevice(radios, addr)
+	if err != nil {
+		return err
+	}
+	name := windows.UTF16ToString(info.name[:])
+
+	input := uint64(addr)
+	var returned uint32
+	err = windows.DeviceIoControl(rd.handle, ioctlBthDisconnectDevice,
+		(*byte)(unsafe.Pointer(&input)), uint32(unsafe.Sizeof(input)), nil, 0, &returned, nil)
+	if err != nil {
+		if notConnected(err) {
+			a.log.Info("the device has no connection to drop", "device", name, "err", err)
+			return ErrNotConnected
+		}
+		a.log.Warn("the disconnect request failed", "device", name, "err", err)
+		return lastError("IOCTL_BTH_DISCONNECT_DEVICE", err)
+	}
+	a.log.Info("the disconnect request was accepted", "device", name)
+	return nil
 }
 
 // Radios implements RadioLister.

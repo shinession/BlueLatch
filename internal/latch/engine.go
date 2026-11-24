@@ -10,8 +10,15 @@ import (
 	"github.com/shinession/bluelatch/internal/bt"
 )
 
-// ErrGaveUp is returned when Policy.MaxAttempts attempts did not connect the device.
-var ErrGaveUp = errors.New("gave up")
+var (
+	// ErrGaveUp is returned when Policy.MaxAttempts attempts did not connect the device.
+	ErrGaveUp = errors.New("gave up")
+
+	// ErrStillConnected is returned by Disconnect when the device still reports
+	// being connected after Policy.DisconnectTimeout. The usual cause is a device
+	// that connects again by itself as soon as it is dropped.
+	ErrStillConnected = errors.New("the device still reports being connected")
+)
 
 // Phase says what Engine.Connect is doing.
 type Phase int
@@ -192,6 +199,52 @@ func (e *Engine) Connect(ctx context.Context, addr bt.Address, report func(Progr
 		emit(Progress{Phase: PhaseBackoff, Detail: detail, Err: rerr, Delay: delay})
 		if err := e.sleep(ctx, delay); err != nil {
 			return result(), err
+		}
+	}
+}
+
+// Disconnect drops the connection to the device and waits until Windows reports
+// the device as disconnected, for at most Policy.DisconnectTimeout. It returns
+// bt.ErrNotConnected at once, without touching anything, for a device that is
+// not connected, and ErrStillConnected when the device still reports being
+// connected after the wait. Unlike a reconnect request, a disconnect request
+// does not switch any service off, so there is nothing to finish when ctx is
+// cancelled: Disconnect simply stops waiting.
+func (e *Engine) Disconnect(ctx context.Context, addr bt.Address) error {
+	dev, err := e.adapter.Device(addr)
+	if err != nil {
+		return fmt.Errorf("reading the device: %w", err)
+	}
+	log := e.log.With("device", dev.DisplayName(), "address", addr.String())
+	if !dev.Connected {
+		log.Info("the device is not connected")
+		return bt.ErrNotConnected
+	}
+
+	log.Info("disconnecting")
+	if err := e.adapter.Disconnect(addr); err != nil {
+		if !errors.Is(err, bt.ErrNotConnected) {
+			log.Warn("the disconnect request failed", "err", err)
+		}
+		return err
+	}
+
+	deadline := e.now().Add(e.policy.DisconnectTimeout)
+	for {
+		dev, err := e.adapter.Device(addr)
+		if err != nil {
+			return fmt.Errorf("reading the device: %w", err)
+		}
+		if !dev.Connected {
+			log.Info("disconnected")
+			return nil
+		}
+		if !e.now().Before(deadline) {
+			log.Warn("the device still reports being connected", "waited", e.policy.DisconnectTimeout)
+			return ErrStillConnected
+		}
+		if err := e.sleep(ctx, e.policy.PollInterval); err != nil {
+			return err
 		}
 	}
 }

@@ -46,6 +46,21 @@ const (
 	serviceEnable  = 1 // BLUETOOTH_SERVICE_ENABLE
 )
 
+// ioctlBthDisconnectDevice is IOCTL_BTH_DISCONNECT_DEVICE of bthioctl.h, built
+// the way the CTL_CODE macro does: FILE_DEVICE_BLUETOOTH (0x41), function 3,
+// METHOD_BUFFERED, FILE_ANY_ACCESS. Sent to a radio with the 64-bit address of
+// a device as its input, it drops the baseband connection to that device.
+const ioctlBthDisconnectDevice = 0x41<<16 | 0<<14 | 3<<2 | 0
+
+// notConnected reports whether an error from the disconnect request means that
+// the device has no connection to drop. Windows answers a device that is not
+// connected with ERROR_DEVICE_NOT_CONNECTED (1167); that is what a normal user
+// got for earbuds that were not connected, on 2026-11-24. No other code is taken
+// for it, because it would hide a real failure.
+func notConnected(err error) bool {
+	return errors.Is(err, windows.ERROR_DEVICE_NOT_CONNECTED)
+}
+
 // The structs below mirror bluetoothapis.h on 64-bit Windows. A wrong size
 // would corrupt memory, so the build fails if one does not match.
 

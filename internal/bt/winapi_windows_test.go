@@ -71,6 +71,25 @@ func TestWinError(t *testing.T) {
 	}
 }
 
+func TestDisconnectRequest(t *testing.T) {
+	// CTL_CODE(FILE_DEVICE_BLUETOOTH, 3, METHOD_BUFFERED, FILE_ANY_ACCESS).
+	if ioctlBthDisconnectDevice != 0x0041000C {
+		t.Errorf("ioctlBthDisconnectDevice = %#x, want 0x0041000C", uint32(ioctlBthDisconnectDevice))
+	}
+	if !notConnected(windows.ERROR_DEVICE_NOT_CONNECTED) {
+		t.Error("ERROR_DEVICE_NOT_CONNECTED is not taken for a device that is not connected")
+	}
+	wrapped := &winError{op: "IOCTL_BTH_DISCONNECT_DEVICE", errno: windows.ERROR_DEVICE_NOT_CONNECTED}
+	if !notConnected(wrapped) {
+		t.Error("a winError with ERROR_DEVICE_NOT_CONNECTED is not taken for a device that is not connected")
+	}
+	for _, other := range []syscall.Errno{windows.ERROR_ACCESS_DENIED, windows.ERROR_NOT_FOUND, windows.ERROR_NOT_CONNECTED, windows.ERROR_INVALID_PARAMETER} {
+		if notConnected(other) {
+			t.Errorf("error %d is taken for a device that is not connected, but it may be a real failure", uintptr(other))
+		}
+	}
+}
+
 // TestLiveDevices reads the real device list. It is read-only, but it needs a
 // Bluetooth radio, so it only runs when BLUELATCH_LIVE=1.
 func TestLiveDevices(t *testing.T) {

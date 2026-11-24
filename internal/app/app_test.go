@@ -27,18 +27,47 @@ type fakeAdapter struct {
 	gate         chan struct{} // when set, Reconnect waits until it is closed
 	entered      chan struct{} // when set, Reconnect signals here when it has started
 	completed    int
+
+	disconnectErr  error         // when set, Disconnect fails with it
+	stayConnected  bool          // Disconnect is accepted, but the device goes on reporting being connected
+	disconnectGate chan struct{} // when set, Disconnect waits until it is closed
+	speakerDown    bool          // the speaker has been disconnected
+	budsDown       bool          // the earbuds have been disconnected
 }
 
 func (f *fakeAdapter) list() []bt.Device {
 	buds := bt.Device{Name: "Example Buds", Address: addrBuds, Class: 0x248404, Remembered: true, Authenticated: true,
 		Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceHandsfree}}
-	buds.Connected = f.connectAfter > 0 && f.completed >= f.connectAfter
+	buds.Connected = f.connectAfter > 0 && f.completed >= f.connectAfter && !f.budsDown
 	return []bt.Device{
 		buds,
 		{Name: "Example Mouse", Address: addrMouse, Class: 0x002580, Remembered: true, Authenticated: true},
-		{Name: "Example Speaker", Address: addrSpeaker, Class: 0x240414, Connected: true, Remembered: true, Authenticated: true,
+		{Name: "Example Speaker", Address: addrSpeaker, Class: 0x240414, Connected: !f.speakerDown, Remembered: true, Authenticated: true,
 			Services: []bt.Service{bt.ServiceA2DPSink}},
 	}
+}
+
+func (f *fakeAdapter) Disconnect(addr bt.Address) error {
+	f.mu.Lock()
+	gate, err, stay := f.disconnectGate, f.disconnectErr, f.stayConnected
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !stay {
+		switch addr {
+		case addrSpeaker:
+			f.speakerDown = true
+		case addrBuds:
+			f.budsDown = true
+		}
+	}
+	return nil
 }
 
 func (f *fakeAdapter) Devices() ([]bt.Device, error) {
@@ -93,6 +122,8 @@ func fastPolicy() latch.Policy {
 		StableFor:      10 * time.Millisecond,
 		BackoffStart:   5 * time.Millisecond,
 		BackoffMax:     10 * time.Millisecond,
+
+		DisconnectTimeout: 50 * time.Millisecond,
 	}
 }
 
@@ -150,8 +181,8 @@ func TestConnectRetriesUntilTheDeviceConnects(t *testing.T) {
 	waitFor(t, "the job to end", func() bool { return jobDone(a) })
 
 	job := a.Snapshot().Job
-	if job.Phase != PhaseConnected || job.Attempt != 2 || job.Error != "" || job.DoneAt == 0 {
-		t.Errorf("job = %+v, want connected after 2 attempts", job)
+	if job.Phase != PhaseConnected || job.Attempt != 2 || job.Error != "" || job.DoneAt == 0 || job.Kind != KindConnect {
+		t.Errorf("job = %+v, want a connection that succeeded after 2 attempts", job)
 	}
 	waitFor(t, "the list to show the earbuds as connected", func() bool {
 		for _, d := range a.Snapshot().Devices {
@@ -330,6 +361,136 @@ func TestAFailedJobSaysWhy(t *testing.T) {
 	}
 }
 
+func TestDisconnectDropsAConnectedDevice(t *testing.T) {
+	adapter := &fakeAdapter{disconnectGate: make(chan struct{})}
+	a := newTestApp(t, adapter)
+
+	if err := a.Disconnect("AA:BB:CC:DD:EE:01"); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	got := a.Snapshot().Job
+	if got == nil || got.Kind != KindDisconnect || got.Phase != PhaseDisconnecting || got.Name != "Example Speaker" || got.Done {
+		t.Errorf("job while the request is in progress = %+v, want a running disconnection of the speaker", got)
+	}
+	if !a.Busy() {
+		t.Error("Busy() is false while a disconnection is in progress")
+	}
+	close(adapter.disconnectGate)
+	waitFor(t, "the job to end", func() bool { return jobDone(a) })
+
+	got = a.Snapshot().Job
+	if got.Phase != PhaseDisconnected || got.Error != "" || got.DoneAt == 0 {
+		t.Errorf("job = %+v, want disconnected", got)
+	}
+	waitFor(t, "the list to show the speaker as not connected", func() bool {
+		for _, d := range a.Snapshot().Devices {
+			if d.Address == "AA:BB:CC:DD:EE:01" {
+				return !d.Connected
+			}
+		}
+		return false
+	})
+	if a.Busy() {
+		t.Error("Busy() is true after the job ended")
+	}
+}
+
+func TestDisconnectRefusesASecondJob(t *testing.T) {
+	adapter := &fakeAdapter{gate: make(chan struct{}), entered: make(chan struct{}, 8)}
+	a := newTestApp(t, adapter)
+	if err := a.Connect("AA:BB:CC:DD:EE:02"); err != nil {
+		t.Fatal(err)
+	}
+	<-adapter.entered
+
+	if err := a.Disconnect("AA:BB:CC:DD:EE:01"); !errors.Is(err, ErrBusy) {
+		t.Errorf("Disconnect while a connection is retried = %v, want ErrBusy", err)
+	}
+	close(adapter.gate)
+}
+
+func TestDisconnectOfADeviceThatIsNotConnectedCountsAsDone(t *testing.T) {
+	a := newTestApp(t, &fakeAdapter{}) // the earbuds are not connected
+
+	if err := a.Disconnect("AA:BB:CC:DD:EE:02"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the job to end", func() bool { return jobDone(a) })
+
+	if got := a.Snapshot().Job; got.Phase != PhaseDisconnected || got.Error != "" {
+		t.Errorf("job = %+v, want disconnected: the goal state is there", got)
+	}
+}
+
+func TestDisconnectSaysSoWhenTheDeviceStaysConnected(t *testing.T) {
+	a := newTestApp(t, &fakeAdapter{stayConnected: true})
+
+	if err := a.Disconnect("AA:BB:CC:DD:EE:01"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the job to end", func() bool { return jobDone(a) })
+
+	got := a.Snapshot().Job
+	if got.Phase != PhaseFailed || got.ErrorCode != "still-connected" || got.Error == "" {
+		t.Errorf("job = %+v, want failed with the still-connected code", got)
+	}
+}
+
+func TestDisconnectReportsAFailedRequest(t *testing.T) {
+	a := newTestApp(t, &fakeAdapter{disconnectErr: errors.New("access denied")})
+
+	if err := a.Disconnect("AA:BB:CC:DD:EE:01"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the job to end", func() bool { return jobDone(a) })
+
+	got := a.Snapshot().Job
+	if got.Phase != PhaseFailed || got.Error != "access denied" || got.ErrorCode != "" {
+		t.Errorf("job = %+v, want failed with the text of the error", got)
+	}
+}
+
+func TestDisconnectRefusesWhatIsNotInTheList(t *testing.T) {
+	a := newTestApp(t, &fakeAdapter{})
+
+	if err := a.Disconnect("not an address"); err == nil {
+		t.Error("Disconnect accepted text that is not an address")
+	}
+	for _, addr := range []string{"00:00:00:00:00:99", "AA:BB:CC:DD:EE:03"} { // unknown, and the mouse
+		if err := a.Disconnect(addr); !errors.Is(err, ErrUnknownDevice) {
+			t.Errorf("Disconnect(%s) = %v, want ErrUnknownDevice", addr, err)
+		}
+	}
+	if a.Snapshot().Job != nil {
+		t.Error("a refused Disconnect left a job behind")
+	}
+}
+
+func TestShutdownWaitsForADisconnectInProgress(t *testing.T) {
+	adapter := &fakeAdapter{disconnectGate: make(chan struct{})}
+	a := newTestApp(t, adapter)
+	if err := a.Disconnect("AA:BB:CC:DD:EE:01"); err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan bool, 1)
+	go func() { result <- a.Shutdown(5 * time.Second) }()
+	select {
+	case <-result:
+		t.Fatal("Shutdown returned while the disconnect request was still running")
+	case <-time.After(80 * time.Millisecond):
+	}
+	close(adapter.disconnectGate)
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Error("Shutdown reported a timeout although the request returned")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Shutdown did not return after the request returned")
+	}
+}
+
 func TestErrorCodes(t *testing.T) {
 	tests := []struct {
 		err  error
@@ -339,6 +500,7 @@ func TestErrorCodes(t *testing.T) {
 		{bt.ErrDeviceNotFound, "not-paired"},
 		{bt.ErrNoAudioServices, "no-services"},
 		{latch.ErrGaveUp, "gave-up"},
+		{latch.ErrStillConnected, "still-connected"},
 		{errors.New("other"), ""},
 	}
 	for _, tt := range tests {
@@ -401,6 +563,31 @@ func TestDemoAdapter(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	if got, _ := d.Device(DemoHeadphones); got.Connected {
 		t.Error("the headphones connected, want them never to")
+	}
+	// Disconnecting works for a connected device only, and starts the earbuds' three requests over.
+	if err := d.Disconnect(DemoSpeaker); err != nil {
+		t.Fatalf("Disconnect(speaker) = %v", err)
+	}
+	if got, _ := d.Device(DemoSpeaker); got.Connected {
+		t.Error("the speaker is still connected after Disconnect")
+	}
+	if err := d.Disconnect(DemoSpeaker); !errors.Is(err, bt.ErrNotConnected) {
+		t.Errorf("a second Disconnect(speaker) = %v, want ErrNotConnected", err)
+	}
+	if err := d.Disconnect(DemoEarbuds); err != nil {
+		t.Fatalf("Disconnect(earbuds) = %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		if _, err := d.Reconnect(DemoEarbuds); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(5 * time.Millisecond)
+	if got, _ := d.Device(DemoEarbuds); got.Connected {
+		t.Error("the earbuds connected after two requests, want three again after a disconnection")
+	}
+	if err := d.Disconnect(0x1); !errors.Is(err, bt.ErrDeviceNotFound) {
+		t.Errorf("Disconnect(unknown) = %v, want ErrDeviceNotFound", err)
 	}
 	if _, err := d.Device(0x1); !errors.Is(err, bt.ErrDeviceNotFound) {
 		t.Errorf("Device(unknown) = %v, want ErrDeviceNotFound", err)

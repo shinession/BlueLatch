@@ -10,7 +10,7 @@
   subsystem, so it opens no console window.
 
 .EXAMPLE
-  .\scripts\build.ps1 -Version 0.1.1
+  .\scripts\build.ps1 -Version 0.1.2
 #>
 [CmdletBinding()]
 param(

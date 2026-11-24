@@ -26,6 +26,10 @@ type Policy struct {
 
 	// MaxAttempts stops the retrying after that many attempts. Zero means no limit.
 	MaxAttempts int
+
+	// DisconnectTimeout is how long Disconnect waits for Windows to report the
+	// device as disconnected after the request was accepted.
+	DisconnectTimeout time.Duration
 }
 
 // DefaultPolicy returns the retry settings BlueLatch uses unless told otherwise.
@@ -36,6 +40,8 @@ func DefaultPolicy() Policy {
 		StableFor:      2 * time.Second,
 		BackoffStart:   2 * time.Second,
 		BackoffMax:     5 * time.Second,
+
+		DisconnectTimeout: 5 * time.Second,
 	}
 }
 
@@ -64,6 +70,9 @@ func (p Policy) normalized() Policy {
 	}
 	if p.MaxAttempts < 0 {
 		p.MaxAttempts = 0
+	}
+	if p.DisconnectTimeout <= 0 {
+		p.DisconnectTimeout = d.DisconnectTimeout
 	}
 	return p
 }

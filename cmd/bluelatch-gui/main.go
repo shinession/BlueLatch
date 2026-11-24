@@ -26,14 +26,16 @@ import (
 // version is set at build time (-ldflags "-X main.version=...").
 var version = "dev"
 
-const usage = `bluelatch-gui [-lang auto|en|zh] [-v] [-debug] [-demo [-demo-connect NAME]]
+const usage = `bluelatch-gui [-lang auto|en|zh] [-v] [-debug] [-demo [-demo-connect NAME] [-demo-disconnect NAME]]
 
   -lang    language of the window: auto follows Windows (default), en, or zh
   -v       log every read of the device state to the log file
   -debug   switch on the developer tools and the context menu of the window
   -demo    use made-up devices, and touch no real device
   -demo-connect NAME
-           with -demo, start connecting that device a moment after the window is up`
+           with -demo, start connecting that device a moment after the window is up
+  -demo-disconnect NAME
+           with -demo, start disconnecting that device a moment after the window is up`
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -45,6 +47,7 @@ func run(args []string) int {
 	debug := fs.Bool("debug", false, "")
 	demo := fs.Bool("demo", false, "")
 	demoConnect := fs.String("demo-connect", "", "")
+	demoDisconnect := fs.String("demo-disconnect", "", "")
 	if err := fs.Parse(args); err != nil {
 		ui.ShowError("BlueLatch", err.Error()+"\n\n"+usage)
 		return 2
@@ -53,8 +56,12 @@ func run(args []string) int {
 		ui.ShowError("BlueLatch", fmt.Sprintf("-lang %q is not auto, en or zh.\n\n%s", *lang, usage))
 		return 2
 	}
-	if *demoConnect != "" && !*demo {
-		ui.ShowError("BlueLatch", "-demo-connect needs -demo.\n\n"+usage)
+	if (*demoConnect != "" || *demoDisconnect != "") && !*demo {
+		ui.ShowError("BlueLatch", "-demo-connect and -demo-disconnect need -demo.\n\n"+usage)
+		return 2
+	}
+	if *demoConnect != "" && *demoDisconnect != "" {
+		ui.ShowError("BlueLatch", "Use either -demo-connect or -demo-disconnect, not both.\n\n"+usage)
 		return 2
 	}
 
@@ -95,7 +102,10 @@ func run(args []string) int {
 	})
 	application.Start()
 	if *demoConnect != "" {
-		go startDemoConnect(application, adapter, *demoConnect, log)
+		go startDemoAction(application, adapter, *demoConnect, false, log)
+	}
+	if *demoDisconnect != "" {
+		go startDemoAction(application, adapter, *demoDisconnect, true, log)
 	}
 
 	dataDir := ""
@@ -130,18 +140,22 @@ func switchOnForgottenServices(a bt.Adapter, log *slog.Logger) {
 	}
 }
 
-// startDemoConnect starts connecting a demo device a moment after the window is
-// up, so the progress can be seen without a click.
-func startDemoConnect(a *app.App, adapter bt.Adapter, name string, log *slog.Logger) {
+// startDemoAction starts connecting or disconnecting a demo device a moment
+// after the window is up, so the progress can be seen without a click.
+func startDemoAction(a *app.App, adapter bt.Adapter, name string, disconnect bool, log *slog.Logger) {
 	time.Sleep(1500 * time.Millisecond)
 	devices, err := adapter.Devices()
 	if err == nil {
 		var dev bt.Device
 		if dev, err = bt.Find(devices, name); err == nil {
-			err = a.Connect(dev.Address.String())
+			if disconnect {
+				err = a.Disconnect(dev.Address.String())
+			} else {
+				err = a.Connect(dev.Address.String())
+			}
 		}
 	}
 	if err != nil {
-		log.Error("-demo-connect failed", "err", err)
+		log.Error("the demo action failed", "disconnect", disconnect, "err", err)
 	}
 }

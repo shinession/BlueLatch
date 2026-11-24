@@ -26,7 +26,8 @@ func TestNormalizedFillsInWhatWouldBreakTheLoop(t *testing.T) {
 	got := Policy{}.normalized()
 	d := DefaultPolicy()
 	if got.AttemptTimeout != d.AttemptTimeout || got.PollInterval != d.PollInterval ||
-		got.BackoffStart != d.BackoffStart || got.BackoffMax != d.BackoffMax {
+		got.BackoffStart != d.BackoffStart || got.BackoffMax != d.BackoffMax ||
+		got.DisconnectTimeout != d.DisconnectTimeout {
 		t.Errorf("Policy{}.normalized() = %+v, want the defaults for the timings", got)
 	}
 	if got.StableFor != 0 || got.MaxAttempts != 0 {

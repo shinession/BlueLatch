@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,59 @@ func (s staticAdapter) Device(addr bt.Address) (bt.Device, error) {
 
 func (s staticAdapter) Reconnect(bt.Address) (bt.ReconnectResult, error) {
 	return bt.ReconnectResult{}, errors.New("Reconnect was not expected")
+}
+
+func (s staticAdapter) Disconnect(bt.Address) error {
+	return errors.New("Disconnect was not expected")
+}
+
+// droppingAdapter lets Disconnect work: a device that is dropped reports being
+// disconnected afterwards, unless stay is set.
+type droppingAdapter struct {
+	mu          sync.Mutex
+	devices     []bt.Device
+	stay        bool  // the request is accepted, but nothing changes
+	err         error // the request fails with this
+	disconnects int
+}
+
+func (d *droppingAdapter) Devices() ([]bt.Device, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]bt.Device(nil), d.devices...), nil
+}
+
+func (d *droppingAdapter) Device(addr bt.Address) (bt.Device, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, dev := range d.devices {
+		if dev.Address == addr {
+			return dev, nil
+		}
+	}
+	return bt.Device{}, bt.ErrDeviceNotFound
+}
+
+func (d *droppingAdapter) Reconnect(bt.Address) (bt.ReconnectResult, error) {
+	return bt.ReconnectResult{}, errors.New("Reconnect was not expected")
+}
+
+func (d *droppingAdapter) Disconnect(addr bt.Address) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.disconnects++
+	if d.err != nil {
+		return d.err
+	}
+	if d.stay {
+		return nil
+	}
+	for i := range d.devices {
+		if d.devices[i].Address == addr {
+			d.devices[i].Connected = false
+		}
+	}
+	return nil
 }
 
 // recoveringAdapter also implements bt.Recoverer.
@@ -221,6 +275,83 @@ func TestConnectNeedsAName(t *testing.T) {
 	c, _, stderr := newTestCLI(staticAdapter{devices: testDevices})
 	if code := c.run([]string{"connect"}); code != 2 || !strings.Contains(stderr.String(), "give the name or the address") {
 		t.Errorf("connect = %d, stderr %q", code, stderr)
+	}
+}
+
+func newDropping() *droppingAdapter {
+	return &droppingAdapter{devices: append([]bt.Device(nil), testDevices...)}
+}
+
+func TestDisconnectDropsAConnectedDevice(t *testing.T) {
+	adapter := newDropping()
+	c, stdout, stderr := newTestCLI(adapter)
+
+	if code := c.run([]string{"disconnect", "Example", "Speaker"}); code != 0 {
+		t.Fatalf("disconnect = %d, stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout.String(), "Disconnected Example Speaker (AA:BB:CC:DD:EE:01)") {
+		t.Errorf("stdout = %q, want the success line", stdout)
+	}
+	if adapter.disconnects != 1 {
+		t.Errorf("Disconnect was called %d times, want 1", adapter.disconnects)
+	}
+}
+
+func TestDisconnectOfADeviceThatIsNotConnected(t *testing.T) {
+	adapter := newDropping()
+	c, stdout, _ := newTestCLI(adapter)
+
+	if code := c.run([]string{"disconnect", "Example Buds"}); code != 0 {
+		t.Fatalf("disconnect = %d, want 0: the device is where the user wants it", code)
+	}
+	if !strings.Contains(stdout.String(), "Example Buds (AA:BB:CC:DD:EE:02) is not connected") {
+		t.Errorf("stdout = %q, want it to say the device is not connected", stdout)
+	}
+	if adapter.disconnects != 0 {
+		t.Errorf("Disconnect was called %d times for a device that is not connected", adapter.disconnects)
+	}
+}
+
+func TestDisconnectWhenTheDeviceStaysConnected(t *testing.T) {
+	adapter := newDropping()
+	adapter.stay = true
+	c, _, stderr := newTestCLI(adapter)
+
+	// The flag stands before the name and shortens the wait.
+	if code := c.run([]string{"disconnect", "-wait", "30ms", "Example Speaker"}); code != 1 {
+		t.Fatalf("disconnect = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "still reports being connected") {
+		t.Errorf("stderr = %q, want the explanation", stderr)
+	}
+}
+
+func TestDisconnectReportsAFailedRequest(t *testing.T) {
+	adapter := newDropping()
+	adapter.err = errors.New("access denied")
+	c, _, stderr := newTestCLI(adapter)
+
+	if code := c.run([]string{"disconnect", "Example Speaker"}); code != 1 || !strings.Contains(stderr.String(), "access denied") {
+		t.Errorf("disconnect = %d, stderr %q; want 1 and the error", code, stderr)
+	}
+}
+
+func TestDisconnectRefusesADeviceThatIsNotAudio(t *testing.T) {
+	adapter := newDropping()
+	c, _, stderr := newTestCLI(adapter)
+
+	if code := c.run([]string{"disconnect", "Example Mouse"}); code != 1 || !strings.Contains(stderr.String(), "is paired but is not an audio device") {
+		t.Errorf("disconnect = %d, stderr %q", code, stderr)
+	}
+	if adapter.disconnects != 0 {
+		t.Error("Disconnect was called for a device that is not an audio device")
+	}
+}
+
+func TestDisconnectNeedsAName(t *testing.T) {
+	c, _, stderr := newTestCLI(newDropping())
+	if code := c.run([]string{"disconnect"}); code != 2 || !strings.Contains(stderr.String(), "give the name or the address") {
+		t.Errorf("disconnect = %d, stderr %q", code, stderr)
 	}
 }
 

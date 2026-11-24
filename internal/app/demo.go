@@ -17,12 +17,14 @@ const (
 // NewDemo returns an adapter with three made-up devices, so the window can be
 // tried without touching a real device (bluelatch-gui -demo). The speaker is
 // connected. The earbuds connect on the third request. The headphones never
-// connect, which is what the Cancel button is for. A request takes two seconds
-// and cannot be interrupted, like a real one.
+// connect, which is what the Cancel button is for. Any of them can be
+// disconnected, and the earbuds then need three requests again. A reconnect
+// request takes two seconds and cannot be interrupted, like a real one; a
+// disconnect request takes one.
 func NewDemo() bt.Adapter { return newDemo(2 * time.Second) }
 
 type demo struct {
-	delay time.Duration // how long a request takes
+	delay time.Duration // how long a reconnect request takes
 
 	mu      sync.Mutex
 	devices []*demoDevice
@@ -30,8 +32,9 @@ type demo struct {
 
 type demoDevice struct {
 	dev       bt.Device
+	connected bool
 	succeedOn int       // the request after which the device connects; 0 means never
-	requests  int       // the requests made so far
+	requests  int       // the requests made since the device was last disconnected
 	upAt      time.Time // when the link comes up after the successful request
 }
 
@@ -41,8 +44,8 @@ func newDemo(delay time.Duration) *demo {
 		return d
 	}
 	return &demo{delay: delay, devices: []*demoDevice{
-		{dev: paired(bt.Device{Name: "Demo Speaker", Address: DemoSpeaker, Class: 0x240414, Connected: true,
-			Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceAVRCPTarget}})},
+		{dev: paired(bt.Device{Name: "Demo Speaker", Address: DemoSpeaker, Class: 0x240414,
+			Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceAVRCPTarget}}), connected: true},
 		{dev: paired(bt.Device{Name: "Demo Earbuds", Address: DemoEarbuds, Class: 0x248404,
 			Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceHandsfree}}), succeedOn: 3},
 		{dev: paired(bt.Device{Name: "Demo Headphones", Address: DemoHeadphones, Class: 0x240418,
@@ -50,11 +53,14 @@ func newDemo(delay time.Duration) *demo {
 	}}
 }
 
+// snapshot returns the device as Windows would report it now. The caller holds
+// the lock.
 func (x *demoDevice) snapshot() bt.Device {
-	d := x.dev
 	if !x.upAt.IsZero() && !time.Now().Before(x.upAt) {
-		d.Connected = true
+		x.connected, x.upAt = true, time.Time{}
 	}
+	d := x.dev
+	d.Connected = x.connected
 	return d
 }
 
@@ -111,4 +117,23 @@ func (d *demo) Reconnect(addr bt.Address) (bt.ReconnectResult, error) {
 		}
 	}
 	return res, nil
+}
+
+func (d *demo) Disconnect(addr bt.Address) error {
+	d.mu.Lock()
+	x := d.find(addr)
+	d.mu.Unlock()
+	if x == nil {
+		return bt.ErrDeviceNotFound
+	}
+
+	time.Sleep(d.delay / 2)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !x.snapshot().Connected {
+		return bt.ErrNotConnected
+	}
+	x.connected, x.upAt, x.requests = false, time.Time{}, 0
+	return nil
 }
