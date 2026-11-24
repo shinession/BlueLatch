@@ -30,6 +30,7 @@ Options for the embedding:
 - The window sets the icons of its title bar and its taskbar button at the DPI of the window (`setWindowIcons`), from the same resource. A program built without the resources keeps the default icon.
 - There is no manifest. The window sets its DPI awareness at run time. A wrong manifest keeps a program from starting, and nothing here needs one.
 - Verified: both programs link with the files, `FileVersionInfo` reads the version information, and Windows extracts the icon at 16, 24, 32, 48, and 256 px. The icon shows in the title bar of the window. Not looked at: Explorer's large-icon views and a pinned taskbar button.
+- Since version 0.1.3 there is one program (ADR 0008), so two `.syso` files are committed (`cmd/bluelatch/rsrc_windows_*.syso`), not four, and `scripts\resources.ps1` writes those.
 
 ---
 
@@ -65,3 +66,4 @@ Options for the embedding:
 - 窗口用同一份资源，按窗口所在的 DPI 设置标题栏和任务栏按钮的图标（`setWindowIcons`）。没有资源构建出的程序保持默认图标。
 - 没有 manifest。窗口在运行时设置 DPI 感知。错误的 manifest 会让程序无法启动，而这里没有任何东西需要它。
 - 已验证：两个程序都能与这些文件链接，`FileVersionInfo` 能读出版本信息，Windows 能在 16、24、32、48 和 256 像素下取出图标。图标显示在窗口的标题栏上。没有看过：资源管理器的大图标视图和固定在任务栏的按钮。
+- 从 0.1.3 版起只有一个程序（ADR 0008），所以提交的是两个 `.syso` 文件（`cmd/bluelatch/rsrc_windows_*.syso`），而不是四个，`scripts\resources.ps1` 写出的就是它们。

@@ -32,12 +32,11 @@ BlueLatch is a Go program for Windows. It has these packages:
 - `internal/logging`: the log file.
 - `internal/app`: what the window shows and does: the list of paired audio devices and at most one job, a connection or a disconnection. It uses the engine, and the window uses it.
 - `internal/ui`: the WebView2 window and its embedded page (`web/index.html`). A thin layer over `internal/app`.
-- `cmd/bluelatch`: the command line, a console program.
-- `cmd/bluelatch-gui`: the window, a GUI-subsystem program (ADR 0004).
+- `cmd/bluelatch`: the program, one console program (ADR 0008). It is the command line, and it starts the window (`window.go`, `window_windows.go`, `console_windows.go`: how the process is attached to a console, the flags, then `ui.Run`).
 - `assets/logo`: the icon, the SVG source and its PNG frames (ADR 0006).
-- `tools/mkrsrc`: a development tool, not part of the programs. It writes the resource files of the two programs (the icon and the version information) with the standard library only (ADR 0006).
+- `tools/mkrsrc`: a development tool, not part of the program. It writes the resource files of the program (the icon and the version information) with the standard library only (ADR 0006).
 
-Do not put retry logic in a user interface. Do not call the Win32 Bluetooth API outside `internal/bt`, and do not call window APIs outside `internal/ui`. Do not introduce a second framework for a responsibility that one of these packages already covers.
+Do not put retry logic in a user interface. Do not call the Win32 Bluetooth API outside `internal/bt`, and do not call window APIs outside `internal/ui`. The one exception is the console of the program: its Win32 calls are in `cmd/bluelatch/console_windows.go`. Do not introduce a second framework for a responsibility that one of these packages already covers.
 
 If a major architectural change is necessary, explain why the existing architecture is insufficient before implementing the change.
 
@@ -73,6 +72,8 @@ BlueLatch changes the state of the user's real Bluetooth devices.
 
 The command line is a contract. Command names, flags, output formats, and exit codes (0 success, 1 failure, 2 usage error) must not change without a clear requirement, because users put them into shortcuts and scripts. Human output goes to stdout, errors and warnings go to stderr.
 
+`bluelatch` without a command opens the window, and `bluelatch help` prints the usage (ADR 0008). The program must stay a console program and must never be built with `-H=windowsgui`: a shell has to wait for it and see its exit code.
+
 A window must show the same states the engine reports (`latch.Phase`) and must not invent its own retry behavior.
 
 ## 7. Security
@@ -102,7 +103,7 @@ Changes should be verified proportionally to their risk. Prefer this order:
 
 Tests that need Bluetooth hardware are skipped unless `BLUELATCH_LIVE=1` is set, and they must be read-only.
 
-A change to the connection logic is not verified until it has been tried on a real device. Say so when it has not. A change to the window or its page is checked in demo mode (`bluelatch-gui.exe -demo`), which touches no real device.
+A change to the connection logic is not verified until it has been tried on a real device. Say so when it has not. A change to the window or its page is checked in demo mode (`bluelatch window -demo`), which touches no real device.
 
 Do not modify or weaken tests only to hide a real implementation failure. Do not claim that a test passed unless it was actually executed and passed. If verification cannot be completed, clearly state what was not verified and why.
 
@@ -112,7 +113,7 @@ Use the standard library and `golang.org/x/sys/windows`. Do not add a dependency
 
 The window uses `github.com/jchv/go-webview2` (ADR 0003), which brings `github.com/jchv/go-winloader`. Another dependency needs a reason, a maintained package, and a recorded version.
 
-The icon and the version information of the programs are in the `cmd/*/rsrc_windows_*.syso` files, which `tools/mkrsrc` writes with the standard library only (ADR 0006). The files are committed. When the icon or the version changes, write them again with `scripts\resources.ps1`; do not add a third-party resource tool.
+The icon and the version information of the program are in the `cmd/bluelatch/rsrc_windows_*.syso` files, which `tools/mkrsrc` writes with the standard library only (ADR 0006). The files are committed. When the icon or the version changes, write them again with `scripts\resources.ps1`; do not add a third-party resource tool.
 
 Do not upgrade unrelated dependencies unless necessary for the requested task.
 
@@ -188,12 +189,11 @@ BlueLatch 是一个 Windows 下的 Go 程序，包含以下包：
 - `internal/logging`：日志文件。
 - `internal/app`：窗口显示和执行的内容：已配对音频设备的列表和至多一个任务（连接或断开）。它使用引擎，窗口使用它。
 - `internal/ui`：WebView2 窗口及其嵌入的页面（`web/index.html`）。`internal/app` 之上的薄层。
-- `cmd/bluelatch`：命令行，控制台程序。
-- `cmd/bluelatch-gui`：窗口，GUI 子系统程序（ADR 0004）。
+- `cmd/bluelatch`：程序本身，一个控制台程序（ADR 0008）。它是命令行，并负责启动窗口（`window.go`、`window_windows.go`、`console_windows.go`：进程如何附着在控制台上、参数，然后调用 `ui.Run`）。
 - `assets/logo`：图标，SVG 源文件及其 PNG 帧（ADR 0006）。
-- `tools/mkrsrc`：开发工具，不属于程序本身。它只用标准库写出两个程序的资源文件（图标和版本信息）（ADR 0006）。
+- `tools/mkrsrc`：开发工具，不属于程序本身。它只用标准库写出程序的资源文件（图标和版本信息）（ADR 0006）。
 
-不要把重试逻辑放进用户界面。不要在 `internal/bt` 之外调用 Win32 蓝牙 API，也不要在 `internal/ui` 之外调用窗口 API。不要为这些包已经覆盖的职责再引入第二套框架。
+不要把重试逻辑放进用户界面。不要在 `internal/bt` 之外调用 Win32 蓝牙 API，也不要在 `internal/ui` 之外调用窗口 API。唯一的例外是程序自己的控制台：它的 Win32 调用在 `cmd/bluelatch/console_windows.go` 中。不要为这些包已经覆盖的职责再引入第二套框架。
 
 如果确实需要较大的架构调整，应在实施前说明现有架构为什么不够用。
 
@@ -229,6 +229,8 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 命令行是一份约定。命令名、参数、输出格式和退出码（0 成功，1 失败，2 用法错误）在没有明确需求时不得改变，因为用户会把它们写进快捷方式和脚本。面向人的输出写到 stdout，错误和警告写到 stderr。
 
+不带命令的 `bluelatch` 打开窗口，`bluelatch help` 打印用法（ADR 0008）。程序必须保持为控制台程序，绝不能用 `-H=windowsgui` 构建：shell 必须能等待它并拿到它的退出码。
+
 窗口必须显示引擎报告的同一组状态（`latch.Phase`），不得自行发明重试行为。
 
 ## 7. 安全
@@ -258,7 +260,7 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 需要蓝牙硬件的测试，除非设置了 `BLUELATCH_LIVE=1`，否则会被跳过，并且它们必须是只读的。
 
-对连接逻辑的修改，在真实设备上试过之前都不算验证过。没有试过时要明确说明。对窗口或其页面的修改，在演示模式（`bluelatch-gui.exe -demo`）下检查，它不会触碰任何真实设备。
+对连接逻辑的修改，在真实设备上试过之前都不算验证过。没有试过时要明确说明。对窗口或其页面的修改，在演示模式（`bluelatch window -demo`）下检查，它不会触碰任何真实设备。
 
 不要仅仅为了让测试通过而修改或削弱测试，从而掩盖真实实现问题。除非测试实际执行并通过，否则不得声称测试已经通过。如果无法完成某项验证，应明确说明未验证的内容及原因。
 
@@ -268,7 +270,7 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 窗口使用 `github.com/jchv/go-webview2`（ADR 0003），它会带入 `github.com/jchv/go-winloader`。再增加其他依赖，需要说明理由、选用维护活跃的包，并记录版本。
 
-程序的图标和版本信息在 `cmd/*/rsrc_windows_*.syso` 文件中，由 `tools/mkrsrc` 只用标准库写出（ADR 0006）。这些文件已提交。图标或版本变化时，用 `scripts\resources.ps1` 重新写出它们；不要引入第三方的资源工具。
+程序的图标和版本信息在 `cmd/bluelatch/rsrc_windows_*.syso` 文件中，由 `tools/mkrsrc` 只用标准库写出（ADR 0006）。这些文件已提交。图标或版本变化时，用 `scripts\resources.ps1` 重新写出它们；不要引入第三方的资源工具。
 
 除非当前任务确实需要，否则不要升级无关依赖。
 

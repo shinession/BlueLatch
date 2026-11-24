@@ -7,8 +7,8 @@
 // bluelatch-N.png (N up to 256) in the directory of the icon frames. There is no
 // manifest: the programs set what a manifest would at run time.
 //
-// Run scripts\resources.ps1 rather than this command; it makes the files of both
-// programs for both architectures.
+// Run scripts\resources.ps1 rather than this command; it makes the files for both
+// architectures.
 package main
 
 import (

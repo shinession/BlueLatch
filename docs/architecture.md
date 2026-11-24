@@ -2,15 +2,17 @@
 
 ## BlueLatch architecture
 
-This document describes what is implemented in version 0.1.2. What is planned is marked as planned.
+This document describes what is implemented in version 0.1.3. What is planned is marked as planned.
 
 ### Overview
 
-BlueLatch is two Go programs for Windows, built without cgo from one module (ADR 0004): `bluelatch.exe`, the command line, and `bluelatch-gui.exe`, the window.
+BlueLatch is one Go program for Windows, built without cgo (ADR 0008): `bluelatch.exe`. It is the command line (`list`, `connect`, `disconnect`, `version`) and the window (`bluelatch` without a command, or `bluelatch window`).
 
 ```text
-bluelatch.exe                          bluelatch-gui.exe
-(cmd/bluelatch)                        (cmd/bluelatch-gui)
+bluelatch.exe   (cmd/bluelatch, one console program)
+      |                                      |
+  command line                          window
+  list, connect, disconnect             bluelatch, bluelatch window
       |                                      |
       |                              internal/ui   WebView2 window, web/index.html
       |                                      |
@@ -27,16 +29,15 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 | Package | Responsibility |
 |---|---|
-| `cmd/bluelatch` | The commands `list`, `connect`, `disconnect`, `version`. Picks the device the user named and prints the progress of the engine. |
-| `cmd/bluelatch-gui` | The window program: flags, single instance, start-up repair, then `ui.Run`. |
+| `cmd/bluelatch` | The program. The commands `list`, `connect`, `disconnect`, `version`, `help`: they pick the device the user named and print the progress of the engine. And the start of the window (`window.go`, `window_windows.go`, `console_windows.go`): how the process is attached to a console, the flags, single instance, start-up repair, then `ui.Run`. |
 | `internal/ui` | The WebView2 window and its page (`web/index.html`, embedded). |
-| `internal/app` | What the window shows and does: the list of paired audio devices, kept fresh, and at most one connection job. Also the demo adapter. |
+| `internal/app` | What the window shows and does: the list of paired audio devices, kept fresh, and at most one job (a connection or a disconnection). Also the demo adapter. |
 | `internal/latch` | The retry engine, `Engine.Connect`. It knows nothing about Windows and uses `bt.Adapter` only. |
 | `internal/bt` | The types (`Device`, `Address`, `Service`, `ClassOfDevice`), the `Adapter` interface, `Find`, the journal, and the Windows implementation of the interface. |
 | `internal/logging` | The log file. |
 | `internal/appdir` | The folder `%LocalAppData%\BlueLatch`. |
 | `assets/logo` | The source of the icon (`bluelatch.svg`) and its PNG frames. |
-| `tools/mkrsrc` | Writes the `.syso` files that give the programs their icon and version information. Standard library only. |
+| `tools/mkrsrc` | Writes the `.syso` files that give the program its icon and version information. Standard library only. |
 
 ### Reading the devices
 
@@ -118,9 +119,27 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 
 `Connect` and `Disconnect` start a job and return at once. Only one job runs at a time (`ErrBusy`), of either kind. A disconnection that finds the device not connected counts as done. `Cancel` marks the job as `cancelling` and cancels its context. `Shutdown(timeout)` cancels the job and the reading, and waits for the request that Windows is working on; it reports false after the timeout. `NewDemo` is an adapter with made-up devices for trying the window.
 
+### How the program starts
+
+`bluelatch.exe` is a console program on purpose (ADR 0008). A shell waits for a console program and sees its exit code, which the command line needs. The window then has to get rid of the console that Windows gives a console program when it is started by a double click.
+
+`bluelatch` without a command and `bluelatch window` call `openWindow`. It asks how the process is attached to a console (`GetConsoleProcessList`):
+
+| State | Meaning | What happens |
+|---|---|---|
+| own (1 process) | Started by a double click, from a shortcut, or from the Start menu: Windows made a console window for this process alone. | `FreeConsole` is the first thing done, which closes that window, and the window of BlueLatch opens in this process. Problems are shown in a message box. |
+| shared (2 or more) | Started from a terminal. | The flags are checked: a mistake is written to stderr with exit code 2, and `-h` prints the usage and exits with 0. Then the program starts itself again as `bluelatch window ...` (`DETACHED_PROCESS`, so without a console, with `BLUELATCH_DETACHED=1` in its environment) and returns 0, so the prompt comes back at once. |
+| none (0) | There is no console: the process that was started for a terminal, or a scheduled task. | The window opens in this process. Problems are shown in a message box. |
+
+`BLUELATCH_DETACHED` makes a process count as "none" whatever its console is, so the process that was started for a terminal can never start another one. The other commands never touch the console.
+
+Measured on the development PC (Windows 11 Enterprise LTSC 10.0.26100, Windows Terminal 1.25 as the default terminal): a program started by Explorer is alone on its console, and one started by `cmd.exe` shares it. After a double click the window of Windows Terminal is visible for about 30 ms before `FreeConsole` closes it (30 ms and 31 ms in the two runs with this program, 25 to 31 ms in three runs of a probe). Without `FreeConsole` it stays for as long as the program runs. Not measured: a PC without Windows Terminal (the classic console host).
+
 ### The window
 
-`bluelatch-gui.exe` is built for the GUI subsystem. At start-up it parses its flags, logs to the log file (and sends the log of the WebView2 binding there), takes a named mutex so that only one window runs (a second start brings the open one to the front), runs the repair of the journal, starts the application, and calls `ui.Run`.
+Once the window runs, the process has no console. It logs to the log file (and sends the log of the WebView2 binding there), takes a named mutex so that only one window runs (a second start brings the open one to the front), runs the repair of the journal, starts the application, and calls `ui.Run`.
+
+The flags of `bluelatch window`:
 
 | Flag | Meaning |
 |---|---|
@@ -143,22 +162,23 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 
 ### The icon and the version information
 
-`tools/mkrsrc` writes a `.syso` file for each program and each architecture (`cmd/*/rsrc_windows_amd64.syso` and `rsrc_windows_arm64.syso`). It is a COFF object with a `.rsrc` section that holds an RT_GROUP_ICON with the ID 1, one RT_ICON for every frame in `assets/logo/png` up to 256 px (a bitmap for the small ones, the PNG file itself for 256 px), and an RT_VERSION. The Go linker links the file by itself, so every build has them. `scripts\resources.ps1 -Version <version>` regenerates the four files, and `scripts\logo-frames.ps1` renders the frames from the SVG (ADR 0006). There is no manifest.
+`tools/mkrsrc` writes a `.syso` file for each architecture (`cmd/bluelatch/rsrc_windows_amd64.syso` and `rsrc_windows_arm64.syso`). It is a COFF object with a `.rsrc` section that holds an RT_GROUP_ICON with the ID 1, one RT_ICON for every frame in `assets/logo/png` up to 256 px (a bitmap for the small ones, the PNG file itself for 256 px), and an RT_VERSION. The Go linker links the file by itself, so every build has them. `scripts\resources.ps1 -Version <version>` regenerates the two files, and `scripts\logo-frames.ps1` renders the frames from the SVG (ADR 0006). There is no manifest.
 
 ### Logging
 
-`internal/logging` writes `%LocalAppData%\BlueLatch\bluelatch.log` (text, English). Above 1 MiB the file is moved to `bluelatch.log.1` when a program starts (one previous log is kept). Every request is logged with the outcome of each service, including the Windows error codes. `-v` adds a line for every read of the device state, and the command line also writes to stderr.
+`internal/logging` writes `%LocalAppData%\BlueLatch\bluelatch.log` (text, English). Above 1 MiB the file is moved to `bluelatch.log.1` when the program starts (one previous log is kept). Every request is logged with the outcome of each service, including the Windows error codes. `-v` adds a line for every read of the device state, and the command line also writes to stderr.
 
 ### Not verified yet
 
 - Earbuds that have Hands-Free as well as A2DP: the one real run was on a speaker with A2DP only.
-- Whether the reconnect request needs administrator rights. Listing was verified in a process that is not elevated. It is not known whether the terminal of the one real run was elevated.
+- Whether the reconnect request needs administrator rights. Listing was verified in a process that is not elevated. It is not known whether the terminal of the one real run, or the window of the runs by the user, was elevated.
 - What the calls return, and how long they block, for a device that is out of reach.
 - Whether `Connected` matches the state Windows Settings shows ("Connected audio").
-- The Connect, Cancel, and Disconnect buttons of the window against a real device. They were exercised in demo mode only; with real devices the window was started and closed, and it listed the devices.
-- Disconnect on a connected device: whether the request drops the link at once, how long Windows takes to report it, and whether the speaker or the earbuds connect again by themselves. The request was sent only for earbuds that were not connected (ADR 0007).
+- The Cancel button of the window against a real device. It was exercised in demo mode only. The user clicked Connect and Disconnect in the window on a speaker; the log of that run is in ADR 0007 and in check 4 of the runbook.
+- Disconnect on the earbuds (A2DP and Hands-Free), and on a device that connects again by itself. On the speaker the request was accepted at once, Windows reported the speaker as disconnected at the first read, 0.5 s later, and the speaker had not connected again by itself when the Connect that followed came, about 5 s later (ADR 0007).
 - Whether Windows reports no radio (`bt.ErrNoRadio`) while Bluetooth is turned off. It was not tried, because turning Bluetooth off disconnects the devices in use.
 - A PC with more than one Bluetooth radio.
+- How long the console window shows after a double click on a PC without Windows Terminal, and on another PC in general (ADR 0008).
 
 ---
 
@@ -166,15 +186,17 @@ Any other error from a request is not fatal: it is shown, and the engine waits f
 
 ## BlueLatch 架构
 
-本文档描述 0.1.2 版中已实现的内容。计划中的内容会标明是计划。
+本文档描述 0.1.3 版中已实现的内容。计划中的内容会标明是计划。
 
 ### 概览
 
-BlueLatch 是两个 Windows 下的 Go 程序，由同一个模块不使用 cgo 构建（ADR 0004）：`bluelatch.exe` 是命令行，`bluelatch-gui.exe` 是窗口。
+BlueLatch 是一个 Windows 下的 Go 程序，不使用 cgo 构建（ADR 0008）：`bluelatch.exe`。它既是命令行（`list`、`connect`、`disconnect`、`version`），也是窗口（不带命令的 `bluelatch`，或者 `bluelatch window`）。
 
 ```text
-bluelatch.exe                          bluelatch-gui.exe
-(cmd/bluelatch)                        (cmd/bluelatch-gui)
+bluelatch.exe   (cmd/bluelatch, one console program)
+      |                                      |
+  command line                          window
+  list, connect, disconnect             bluelatch, bluelatch window
       |                                      |
       |                              internal/ui   WebView2 window, web/index.html
       |                                      |
@@ -191,10 +213,9 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 | 包 | 职责 |
 |---|---|
-| `cmd/bluelatch` | 命令 `list`、`connect`、`disconnect`、`version`。找出用户指定的设备，并打印引擎的进度。 |
-| `cmd/bluelatch-gui` | 窗口程序：参数、单实例、启动时的修复，然后调用 `ui.Run`。 |
+| `cmd/bluelatch` | 程序本身。命令 `list`、`connect`、`disconnect`、`version`、`help`：它们找出用户指定的设备，并打印引擎的进度。还有窗口的启动（`window.go`、`window_windows.go`、`console_windows.go`）：进程如何附着在控制台上、参数、单实例、启动时的修复，然后调用 `ui.Run`。 |
 | `internal/ui` | WebView2 窗口及其页面（`web/index.html`，已嵌入）。 |
-| `internal/app` | 窗口显示和执行的内容：已配对音频设备的列表（保持刷新），以及至多一个连接任务。还有演示用的 adapter。 |
+| `internal/app` | 窗口显示和执行的内容：已配对音频设备的列表（保持刷新），以及至多一个任务（连接或断开）。还有演示用的 adapter。 |
 | `internal/latch` | 重试引擎 `Engine.Connect`。它不了解 Windows，只使用 `bt.Adapter`。 |
 | `internal/bt` | 类型（`Device`、`Address`、`Service`、`ClassOfDevice`）、`Adapter` 接口、`Find`、待恢复记录，以及该接口的 Windows 实现。 |
 | `internal/logging` | 日志文件。 |
@@ -282,9 +303,27 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 `Connect` 和 `Disconnect` 启动一个任务并立即返回。同一时间只运行一个任务（`ErrBusy`），不论哪种。断开时发现设备并未连接，也算完成。`Cancel` 把任务标记为 `cancelling` 并取消它的上下文。`Shutdown(timeout)` 取消任务和读取，并等待 Windows 正在处理的请求；超时后返回 false。`NewDemo` 是带虚构设备的 adapter，用于试用窗口。
 
+### 程序如何启动
+
+`bluelatch.exe` 有意做成控制台程序（ADR 0008）。shell 会等待控制台程序并拿到它的退出码，命令行需要这一点。窗口则必须摆脱 Windows 在双击启动控制台程序时给它的那个控制台。
+
+不带命令的 `bluelatch` 和 `bluelatch window` 会调用 `openWindow`。它先问进程是如何附着在控制台上的（`GetConsoleProcessList`）：
+
+| 状态 | 含义 | 发生什么 |
+|---|---|---|
+| own（1 个进程） | 通过双击、快捷方式或开始菜单启动：Windows 只为这个进程创建了一个控制台窗口。 | 第一件事就是 `FreeConsole`，这会关闭那个窗口，然后 BlueLatch 的窗口在本进程中打开。问题显示在消息框里。 |
+| shared（2 个或更多） | 从终端启动。 | 先检查参数：有错就写到 stderr 并返回退出码 2，`-h` 打印用法并返回 0。然后程序以 `bluelatch window ...` 再启动自己一次（`DETACHED_PROCESS`，即没有控制台，环境中带有 `BLUELATCH_DETACHED=1`），并返回 0，所以提示符立即回来。 |
+| none（0 个） | 没有控制台：为终端启动的那个进程，或者计划任务。 | 窗口在本进程中打开。问题显示在消息框里。 |
+
+`BLUELATCH_DETACHED` 让进程不管控制台是什么情况都按 "none" 处理，所以为终端启动的那个进程绝不会再启动另一个。其他命令从不触碰控制台。
+
+在开发用电脑上的测量（Windows 11 Enterprise LTSC 10.0.26100，Windows Terminal 1.25 为默认终端）：由 Explorer 启动的程序独占它的控制台，由 `cmd.exe` 启动的则与之共享。双击之后，Windows Terminal 的窗口在 `FreeConsole` 把它关闭之前可见约 30 毫秒（用本程序跑了两次，分别是 30 毫秒和 31 毫秒；用探测程序跑了三次，是 25 到 31 毫秒）。不调用 `FreeConsole` 的话，它会一直留到程序结束。没有测量过：没有 Windows Terminal 的电脑（经典控制台宿主）。
+
 ### 窗口
 
-`bluelatch-gui.exe` 按 GUI 子系统构建。启动时它解析参数，把日志写入日志文件（WebView2 绑定的日志也送到那里），获取一个命名互斥量以保证只运行一个窗口（第二次启动会把已打开的窗口带到前台），运行待恢复记录的修复，启动应用，然后调用 `ui.Run`。
+窗口运行起来之后，进程没有控制台。它把日志写入日志文件（WebView2 绑定的日志也送到那里），获取一个命名互斥量以保证只运行一个窗口（第二次启动会把已打开的窗口带到前台），运行待恢复记录的修复，启动应用，然后调用 `ui.Run`。
+
+`bluelatch window` 的参数：
 
 | 参数 | 含义 |
 |---|---|
@@ -307,7 +346,7 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 ### 图标和版本信息
 
-`tools/mkrsrc` 为每个程序和每种架构写出一个 `.syso` 文件（`cmd/*/rsrc_windows_amd64.syso` 和 `rsrc_windows_arm64.syso`）。它是带有 `.rsrc` 节的 COFF 目标文件，其中包含 ID 为 1 的 RT_GROUP_ICON，`assets/logo/png` 中每个不超过 256 像素的帧各对应一个 RT_ICON（小尺寸用位图，256 像素用 PNG 文件本身），以及一个 RT_VERSION。Go 链接器会自动链接这个文件，所以每次构建都带有它们。`scripts\resources.ps1 -Version <version>` 重新生成这四个文件，`scripts\logo-frames.ps1` 从 SVG 渲染出这些帧（ADR 0006）。没有 manifest。
+`tools/mkrsrc` 为每种架构写出一个 `.syso` 文件（`cmd/bluelatch/rsrc_windows_amd64.syso` 和 `rsrc_windows_arm64.syso`）。它是带有 `.rsrc` 节的 COFF 目标文件，其中包含 ID 为 1 的 RT_GROUP_ICON，`assets/logo/png` 中每个不超过 256 像素的帧各对应一个 RT_ICON（小尺寸用位图，256 像素用 PNG 文件本身），以及一个 RT_VERSION。Go 链接器会自动链接这个文件，所以每次构建都带有它们。`scripts\resources.ps1 -Version <version>` 重新生成这两个文件，`scripts\logo-frames.ps1` 从 SVG 渲染出这些帧（ADR 0006）。没有 manifest。
 
 ### 日志
 
@@ -316,10 +355,11 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 ### 尚未验证
 
 - 既有 A2DP 又有 Hands-Free 的耳塞：唯一一次真实运行是在只有 A2DP 的音箱上。
-- 重新连接请求是否需要管理员权限。列出设备已在未提权的进程中验证过。那次真实运行所用的终端是否已提权，不得而知。
+- 重新连接请求是否需要管理员权限。列出设备已在未提权的进程中验证过。那次真实运行所用的终端、以及用户运行窗口时的进程是否已提权，不得而知。
 - 设备够不着时，这些调用返回什么、阻塞多久。
 - `Connected` 是否与 Windows 设置显示的状态（"Connected audio"）一致。
-- 窗口的 Connect、Cancel 和 Disconnect 按钮对真实设备的效果。它们只在演示模式下试过；对真实设备，窗口只做过启动和关闭，并列出了设备。
-- 在已连接的设备上执行 Disconnect：请求是否会立刻断开链路，Windows 要多久才报告，以及音箱和耳塞是否会自己再连上。该请求只对未连接的耳塞发送过（ADR 0007）。
+- 窗口的 Cancel 按钮对真实设备的效果。它只在演示模式下试过。用户在窗口里对一台音箱点击过 Connect 和 Disconnect；那次运行的日志记录在 ADR 0007 和运行手册的检查 4 中。
+- 在耳塞（A2DP 加 Hands-Free）上执行 Disconnect，以及在会自己再连上的设备上执行。在音箱上，请求被立即接受，Windows 在第一次读取时（0.5 秒后）就报告音箱已断开，而随后的 Connect 到来时（约 5 秒后）音箱并没有自己再连上（ADR 0007）。
 - 蓝牙关闭时 Windows 是否报告没有适配器（`bt.ErrNoRadio`）。没有试过，因为关闭蓝牙会断开正在使用的设备。
 - 有多个蓝牙适配器的电脑。
+- 在没有 Windows Terminal 的电脑上，以及一般意义上的其他电脑上，双击之后控制台窗口会显示多久（ADR 0008）。

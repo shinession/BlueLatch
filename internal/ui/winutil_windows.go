@@ -204,8 +204,8 @@ func bringToFront(title string) {
 	procSetForegroundWindow.Call(hwnd)
 }
 
-// ShowError tells the user something in a message box. The window build has no
-// console to write to.
+// ShowError tells the user something in a message box. The process of the window
+// has no console to write to.
 func ShowError(title, text string) {
 	t, err1 := windows.UTF16PtrFromString(title)
 	m, err2 := windows.UTF16PtrFromString(text)

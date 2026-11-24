@@ -2,7 +2,7 @@
 
 ## ADR 0004: The window is a separate executable
 
-Status: accepted on 2026-11-24. Built in version 0.1.1. It resolves the open point of [ADR 0003](./0003-webview2-window.md).
+Status: superseded by [ADR 0008](./0008-one-executable-that-frees-its-console.md) in version 0.1.3, which measured what the options below assumed. It was accepted on 2026-11-24, built in version 0.1.1, and resolved the open point of [ADR 0003](./0003-webview2-window.md).
 
 ### Context
 
@@ -31,7 +31,7 @@ Use option 3. The command line keeps its name and its contract (AGENTS.md sectio
 
 ## ADR 0004：窗口是独立的可执行文件
 
-状态：2026-11-24 已接受。已在 0.1.1 版中构建。它解决了 [ADR 0003](./0003-webview2-window.md) 中遗留的问题。
+状态：在 0.1.3 版中被 [ADR 0008](./0008-one-executable-that-frees-its-console.md) 取代，后者测量了下面这些方案所假定的内容。它于 2026-11-24 被接受，已在 0.1.1 版中构建，并解决了 [ADR 0003](./0003-webview2-window.md) 中遗留的问题。
 
 ### 背景
 

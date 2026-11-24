@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-  Regenerates the .syso files that give the programs their icon and their version
+  Regenerates the .syso files that give the program its icon and its version
   information (the Details tab of the file properties).
 
 .DESCRIPTION
-  Writes cmd\bluelatch\rsrc_windows_<arch>.syso and cmd\bluelatch-gui\rsrc_windows_<arch>.syso
-  for amd64 and arm64, from the icon frames in assets\logo\png (bluelatch-N.png, N up to 256).
-  The Go toolchain links a .syso file that sits in the directory of a main package, so building
-  needs no tool: run this script only when the icon or the version changes, and commit the files.
+  Writes cmd\bluelatch\rsrc_windows_<arch>.syso for amd64 and arm64, from the icon
+  frames in assets\logo\png (bluelatch-N.png, N up to 256). The Go toolchain links a
+  .syso file that sits in the directory of a main package, so building needs no tool:
+  run this script only when the icon or the version changes, and commit the files.
   tools\mkrsrc does the work, with the standard library only.
 
 .EXAMPLE
-  .\scripts\resources.ps1 -Version 0.1.2
+  .\scripts\resources.ps1 -Version 0.1.3
 #>
 [CmdletBinding()]
 param(
@@ -22,18 +22,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$programs = @(
-    @{ Dir = 'cmd\bluelatch';     File = 'bluelatch.exe';     Name = 'bluelatch';     Description = 'BlueLatch (command line)' },
-    @{ Dir = 'cmd\bluelatch-gui'; File = 'bluelatch-gui.exe'; Name = 'bluelatch-gui'; Description = 'BlueLatch' }
-)
-
-foreach ($p in $programs) {
-    foreach ($arch in 'amd64', 'arm64') {
-        $out = Join-Path $p.Dir "rsrc_windows_$arch.syso"
-        go run .\tools\mkrsrc -arch $arch -out $out -icons assets\logo\png -version $Version `
-            -product-name BlueLatch -description $p.Description -original-filename $p.File -internal-name $p.Name
-        if ($LASTEXITCODE -ne 0) { throw "mkrsrc failed for $out (exit code $LASTEXITCODE)" }
-    }
+foreach ($arch in 'amd64', 'arm64') {
+    $out = "cmd\bluelatch\rsrc_windows_$arch.syso"
+    go run .\tools\mkrsrc -arch $arch -out $out -icons assets\logo\png -version $Version `
+        -product-name BlueLatch -description BlueLatch -original-filename bluelatch.exe -internal-name bluelatch
+    if ($LASTEXITCODE -ne 0) { throw "mkrsrc failed for $out (exit code $LASTEXITCODE)" }
 }
 
 Get-ChildItem cmd -Recurse -Filter *.syso | Select-Object @{ n = 'File'; e = { $_.FullName.Substring((Get-Location).Path.Length + 1) } }, Length

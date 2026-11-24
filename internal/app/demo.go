@@ -15,7 +15,7 @@ const (
 )
 
 // NewDemo returns an adapter with three made-up devices, so the window can be
-// tried without touching a real device (bluelatch-gui -demo). The speaker is
+// tried without touching a real device (bluelatch window -demo). The speaker is
 // connected. The earbuds connect on the third request. The headphones never
 // connect, which is what the Cancel button is for. Any of them can be
 // disconnected, and the earbuds then need three requests again. A reconnect

@@ -119,15 +119,11 @@ func newTestCLI(adapter bt.Adapter) (c *cli, stdout, stderr *bytes.Buffer) {
 		stderr:     stderr,
 		newAdapter: func(*slog.Logger) (bt.Adapter, error) { return adapter, nil },
 		openLog:    func(bool) (*slog.Logger, func()) { return slog.New(slog.DiscardHandler), func() {} },
+		console:    &fakeConsole{},
+		showError:  func(string, string) {},
+		window:     func(windowOptions) int { return 0 },
 	}
 	return c, stdout, stderr
-}
-
-func TestRunWithoutArguments(t *testing.T) {
-	c, _, stderr := newTestCLI(staticAdapter{})
-	if code := c.run(nil); code != 2 || !strings.Contains(stderr.String(), "Usage:") {
-		t.Errorf("run() = %d, stderr %q; want 2 and the usage", code, stderr)
-	}
 }
 
 func TestRunUnknownCommand(t *testing.T) {

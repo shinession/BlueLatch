@@ -2,6 +2,24 @@
 
 ## Changelog
 
+### 0.1.3 (2026-11-24)
+
+Added:
+
+- Language links at the top of the README (`English · 中文`, and one back to English under the Chinese heading), so that the other language is one click away.
+- `bluelatch window [flags]`, which opens the window; `bluelatch` without a command does the same. The flags are those of the former `bluelatch-gui` (`-lang`, `-v`, `-debug`, `-demo`, `-demo-connect`, `-demo-disconnect`).
+- ADR 0008, which measured what ADR 0004 had assumed about console and GUI programs.
+- Tests for the three states of the console (own, shared with a terminal, none) and for the flags of the window, with fakes; and one that starts a real detached process.
+
+Changed:
+
+- One program: the window is part of `bluelatch.exe` (4.1 MB), and `bluelatch-gui.exe` is gone (ADR 0008, which supersedes ADR 0004). The program stays a console program, so `cmd.exe` and PowerShell wait for the command line and see its exit codes. After a double click a console window shows for about 30 ms before the program closes it. Started from a terminal, the window opens in another process and the prompt comes back at once.
+- `bluelatch` without arguments no longer prints the usage and exits with 2: it opens the window. The usage is `bluelatch help`.
+- `scripts\build.ps1` builds one program, `scripts\resources.ps1` writes two `.syso` files (amd64 and arm64) instead of four, and `cmd/bluelatch-gui` is gone.
+- The documents say what the log of the user's run on a speaker showed: Disconnect and Connect in the window worked (ADR 0007, check 4 of the runbook).
+
+Upgrading: copy `bluelatch.exe` from `release\`, and delete `bluelatch-gui.exe`. Shortcuts to `bluelatch-gui.exe` have to point to `bluelatch.exe`, with no arguments. A script that called `bluelatch` without arguments to get the usage has to call `bluelatch help`. Nothing has to be migrated.
+
 ### 0.1.2 (2026-11-24)
 
 Added:
@@ -47,6 +65,24 @@ The spike: `bluelatch list`, `bluelatch connect`, the retry engine, the log file
 # 中文
 
 ## 变更日志
+
+### 0.1.3（2026-11-24）
+
+新增：
+
+- README 顶部的语言链接（`English · 中文`，以及中文标题下回到英文的链接），一次点击就能切换到另一种语言。
+- `bluelatch window [flags]` 打开窗口；不带命令的 `bluelatch` 与它相同。参数就是原来 `bluelatch-gui` 的参数（`-lang`、`-v`、`-debug`、`-demo`、`-demo-connect`、`-demo-disconnect`）。
+- ADR 0008，它测量了 ADR 0004 对控制台程序和 GUI 程序所做的假定。
+- 用假对象测试控制台的三种状态（独占、与终端共享、没有）和窗口的参数；还有一个测试会真正启动一个独立进程。
+
+变更：
+
+- 一个程序：窗口成为 `bluelatch.exe`（4.1 MB）的一部分，`bluelatch-gui.exe` 不再有（ADR 0008，它取代 ADR 0004）。程序仍是控制台程序，所以 `cmd.exe` 和 PowerShell 会等待命令行并拿到它的退出码。双击之后会有一个控制台窗口显示约 30 毫秒，随后被程序关闭。从终端启动时，窗口在另一个进程中打开，提示符立即回来。
+- 不带参数的 `bluelatch` 不再打印用法并返回 2：它打开窗口。用法改用 `bluelatch help`。
+- `scripts\build.ps1` 构建一个程序，`scripts\resources.ps1` 写出两个 `.syso` 文件（amd64 和 arm64），而不是四个，`cmd/bluelatch-gui` 已删除。
+- 文档记录了用户在一台音箱上运行的日志所显示的内容：窗口里的 Disconnect 和 Connect 都可以工作（ADR 0007，运行手册的检查 4）。
+
+升级：从 `release\` 复制 `bluelatch.exe`，并删除 `bluelatch-gui.exe`。指向 `bluelatch-gui.exe` 的快捷方式要改为指向 `bluelatch.exe`，不带参数。以前用不带参数的 `bluelatch` 来获取用法的脚本，要改为调用 `bluelatch help`。不需要迁移任何东西。
 
 ### 0.1.2（2026-11-24）
 

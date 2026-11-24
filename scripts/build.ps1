@@ -1,16 +1,17 @@
 <#
 .SYNOPSIS
-  Builds release\bluelatch.exe (command line) and release\bluelatch-gui.exe (window).
+  Builds release\bluelatch.exe: the command line and the window in one program.
 
 .DESCRIPTION
-  Static builds without cgo (BlueLatch calls the Windows Bluetooth API through
+  A static build without cgo (BlueLatch calls the Windows Bluetooth API through
   syscalls, and the window uses a WebView2 binding that needs no C compiler).
-  The version is stamped into both programs and shown by "bluelatch version" and
-  in the footer of the window. The window program is built for the Windows GUI
-  subsystem, so it opens no console window.
+  The version is stamped into the program and shown by "bluelatch version" and in
+  the footer of the window. The program is a console program on purpose (ADR 0008):
+  a shell waits for it and sees its exit code, and the window closes the console
+  that a double click gives it.
 
 .EXAMPLE
-  .\scripts\build.ps1 -Version 0.1.2
+  .\scripts\build.ps1 -Version 0.1.3
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +27,4 @@ $env:CGO_ENABLED = '0'
 go build -trimpath -ldflags "-s -w -X main.version=$Version" -o release\bluelatch.exe .\cmd\bluelatch
 if ($LASTEXITCODE -ne 0) { throw "go build of bluelatch failed (exit code $LASTEXITCODE)" }
 
-go build -trimpath -ldflags "-H=windowsgui -s -w -X main.version=$Version" -o release\bluelatch-gui.exe .\cmd\bluelatch-gui
-if ($LASTEXITCODE -ne 0) { throw "go build of bluelatch-gui failed (exit code $LASTEXITCODE)" }
-
-Get-Item release\bluelatch.exe, release\bluelatch-gui.exe | Select-Object Name, Length, LastWriteTime
+Get-Item release\bluelatch.exe | Select-Object Name, Length, LastWriteTime

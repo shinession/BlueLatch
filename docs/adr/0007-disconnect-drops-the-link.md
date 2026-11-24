@@ -2,7 +2,7 @@
 
 ## ADR 0007: Disconnect drops the connection and leaves everything else alone
 
-Status: accepted on 2026-11-24, at the request of the user (version 1 had no Disconnect). Built in version 0.1.2. The request has been sent for a device that is not connected; it has not been tried on a connected one yet.
+Status: accepted on 2026-11-24, at the request of the user (version 1 had no Disconnect). Built in version 0.1.2. The user tried it on a connected speaker, and it worked (see Observed); it has not been tried on the earbuds.
 
 ### Context
 
@@ -27,12 +27,14 @@ The window shows a Disconnect button on the card of a connected device. The comm
 
 On 2026-11-24 the request was sent as a normal user (integrity level Medium) for earbuds that were not connected. Windows answered with ERROR_DEVICE_NOT_CONNECTED (1167), not with an access error, so the request is not refused for lack of administrator rights. Only that code is taken for "not connected".
 
+The same day, at 23:21, the user clicked Disconnect on the card of a connected speaker in the window of 0.1.2, and Connect on the same card about five seconds later. The log shows: the request accepted at once ("the disconnect request was accepted"); the speaker reported as disconnected at the first read of its state, 0.5 s later; then the Connect, which found the speaker not connected (so it had not connected again by itself within those five seconds), switched its A2DP Sink service off and on, and connected it on the first attempt after 8.4 s. The folder `pending` stayed empty. The log does not say whether the window had been started elevated.
+
 ### Consequences
 
 - Nothing is switched off, so there is nothing to repair (no record in the journal) and nothing to finish when the program is stopped.
 - A device may connect again by itself as soon as it is dropped. That is up to the device. The program then reports that the device still reports being connected, or the list shows it connected again.
 - Only one job runs at a time. Disconnect is refused while a connection is being retried (the button is disabled), and Connect while a disconnection is running.
-- Not known until it is tried on a connected device: whether the request drops the link at once, how long Windows takes to report it, and whether the speaker and the earbuds connect again by themselves.
+- Known from the run on the speaker: the request drops the link at once, Windows reports it at the first read after 0.5 s, and the speaker did not connect again by itself within about 5 s. Not known: how the earbuds (A2DP and Hands-Free) behave, and whether some devices connect again by themselves after they are dropped.
 
 ---
 
@@ -40,7 +42,7 @@ On 2026-11-24 the request was sent as a normal user (integrity level Medium) for
 
 ## ADR 0007：Disconnect 只断开连接，不动其他任何东西
 
-状态：2026-11-24 应用户要求接受（第 1 版没有 Disconnect）。已在 0.1.2 版中构建。该请求已对一个未连接的设备发送过；尚未在已连接的设备上试过。
+状态：2026-11-24 应用户要求接受（第 1 版没有 Disconnect）。已在 0.1.2 版中构建。用户在一台已连接的音箱上试过，可以工作（见"观察到的情况"）；尚未在耳塞上试过。
 
 ### 背景
 
@@ -65,9 +67,11 @@ On 2026-11-24 the request was sent as a normal user (integrity level Medium) for
 
 2026-11-24 以普通用户（完整性级别 Medium）对一副未连接的耳塞发送了该请求。Windows 返回 ERROR_DEVICE_NOT_CONNECTED（1167），而不是访问错误，所以该请求不会因为缺少管理员权限而被拒绝。只有这个错误码会被当作"未连接"。
 
+同一天 23:21，用户在 0.1.2 的窗口里点击了一台已连接音箱卡片上的 Disconnect，约五秒后又点击了同一张卡片上的 Connect。日志显示：请求被立即接受（"the disconnect request was accepted"）；0.5 秒后第一次读取状态时，音箱已被报告为断开；随后的 Connect 发现音箱未连接（所以它在这五秒内没有自己再连上），把它的 A2DP Sink 服务先关闭再打开，第一次尝试就在 8.4 秒后连上了。文件夹 `pending` 始终为空。日志没有说明窗口是否以提权方式启动。
+
 ### 后果
 
 - 没有任何东西被关闭，所以没有需要修复的（待恢复记录里没有记录），程序被停止时也没有需要完成的。
 - 设备被断开后可能立刻自己又连上。这由设备决定。此时程序会报告设备仍显示为已连接，或者列表显示它又连上了。
 - 同一时间只运行一个任务。重试连接期间拒绝 Disconnect（按钮被禁用），断开期间拒绝 Connect。
-- 在已连接的设备上试过之前不清楚的是：请求是否会立刻断开链路，Windows 要多久才报告，以及音箱和耳塞是否会自己再连上。
+- 从音箱上的这次运行得知：请求会立刻断开链路，Windows 在 0.5 秒后的第一次读取时就报告了，音箱在约 5 秒内没有自己再连上。尚不清楚：耳塞（A2DP 加 Hands-Free）的表现，以及是否有些设备被断开后会自己再连上。
