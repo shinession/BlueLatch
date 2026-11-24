@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/shinession/bluelatch/internal/appdir"
 )
 
 // maxLogSize is the size above which the log is moved aside when it is opened.
@@ -17,11 +19,11 @@ const maxLogSize = 1 << 20
 
 // Path returns where the log file lives.
 func Path() (string, error) {
-	dir, err := os.UserCacheDir() // %LocalAppData% on Windows
+	dir, err := appdir.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "BlueLatch", "bluelatch.log"), nil
+	return filepath.Join(dir, "bluelatch.log"), nil
 }
 
 // Open returns a logger that appends to the log file. With verbose it logs at

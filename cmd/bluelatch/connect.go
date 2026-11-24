@@ -41,6 +41,7 @@ func (c *cli) connect(args []string) int {
 		fmt.Fprintln(c.stderr, "bluelatch:", err)
 		return 1
 	}
+	c.recoverServices(adapter)
 	devices, err := adapter.Devices()
 	if err != nil {
 		fmt.Fprintln(c.stderr, "bluelatch:", err)
@@ -71,6 +72,22 @@ func (c *cli) connect(args []string) int {
 	default:
 		fmt.Fprintln(c.stderr, "bluelatch:", err)
 		return 1
+	}
+}
+
+// recoverServices switches on again the services that an earlier run left
+// switched off, before anything is connected.
+func (c *cli) recoverServices(adapter bt.Adapter) {
+	recoverer, ok := adapter.(bt.Recoverer)
+	if !ok {
+		return
+	}
+	restored, err := recoverer.Recover()
+	for _, r := range restored {
+		fmt.Fprintf(c.stdout, "Switched on the %s service of %s again; an earlier run had left it switched off.\n", r.Service, r.Device)
+	}
+	if err != nil {
+		fmt.Fprintln(c.stderr, "bluelatch: warning: switching on the services an earlier run left off:", err)
 	}
 }
 

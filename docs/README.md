@@ -6,9 +6,10 @@ Look a topic up here before changing or debugging it. Every document is bilingua
 
 | Document | Describes |
 |---|---|
-| [architecture.md](./architecture.md) | The implemented architecture: packages, how the devices are read, the reconnect request, the retry engine, the log. What is planned is marked as planned. |
-| [runbook.md](./runbook.md) | Development setup, build, tests, the live checks on a real device (and what they showed), the log file, troubleshooting. |
-| [adr/](./adr/README.md) | Architecture decision records: 0001 how a device is reconnected, 0002 what version 1 covers, 0003 the window. |
+| [architecture.md](./architecture.md) | The implemented architecture: packages, how the devices are read, the reconnect request, the journal, the retry engine, the application layer, the window, the log. What is planned is marked as planned; what is not verified yet is listed at the end. |
+| [runbook.md](./runbook.md) | Development setup, build, running the window and its demo mode, checking the page without Windows, the live checks on a real device (and what they showed), the log file, troubleshooting. |
+| [changelog.md](./changelog.md) | What changed in each version, and what to do when upgrading. |
+| [adr/](./adr/README.md) | Architecture decision records: 0001 how a device is reconnected, 0002 what version 1 covers, 0003 the window, 0004 the window is a separate executable, 0005 the journal of service switches. |
 
 ---
 
@@ -20,6 +21,7 @@ Look a topic up here before changing or debugging it. Every document is bilingua
 
 | 文档 | 内容 |
 |---|---|
-| [architecture.md](./architecture.md) | 已实现的架构：包、如何读取设备、重新连接请求、重试引擎、日志。计划中的内容会标明是计划。 |
-| [runbook.md](./runbook.md) | 开发环境、构建、测试、在真实设备上的真机检查（以及检查的结果）、日志文件、故障排查。 |
-| [adr/](./adr/README.md) | 架构决策记录：0001 如何重新连接设备，0002 第 1 版覆盖什么，0003 窗口。 |
+| [architecture.md](./architecture.md) | 已实现的架构：包、如何读取设备、重新连接请求、待恢复记录、重试引擎、应用层、窗口、日志。计划中的内容会标明是计划；尚未验证的内容列在最后。 |
+| [runbook.md](./runbook.md) | 开发环境、构建、运行窗口及其演示模式、不借助 Windows 检查页面、在真实设备上的真机检查（以及检查的结果）、日志文件、故障排查。 |
+| [changelog.md](./changelog.md) | 每个版本的变更，以及升级时要做的事。 |
+| [adr/](./adr/README.md) | 架构决策记录：0001 如何重新连接设备，0002 第 1 版覆盖什么，0003 窗口，0004 窗口是独立的可执行文件，0005 服务开关的待恢复记录。 |

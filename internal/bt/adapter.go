@@ -70,6 +70,22 @@ type Adapter interface {
 	Reconnect(addr Address) (ReconnectResult, error)
 }
 
+// Restored is a service that Recover switched on again.
+type Restored struct {
+	Device  string
+	Address Address
+	Service Service
+}
+
+// Recoverer is implemented by adapters that keep a journal of the services they
+// switch off.
+type Recoverer interface {
+	// Recover switches on again every service that an earlier run switched off
+	// and did not switch on again, because it was stopped between the two
+	// calls. Call it once at start-up, before anything is connected.
+	Recover() ([]Restored, error)
+}
+
 // Radio describes a local Bluetooth radio, for diagnostics.
 type Radio struct {
 	Name          string

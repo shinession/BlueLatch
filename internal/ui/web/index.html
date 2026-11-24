@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>BlueLatch</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f3f3f3;
+  --card: #fbfbfb;
+  --card-active: #f3f8fd;
+  --text: #1a1a1a;
+  --muted: #5c5c5c;
+  --border: #e3e3e3;
+  --accent: #0067c0;
+  --accent-hover: #1a76c9;
+  --accent-text: #ffffff;
+  --btn: #fdfdfd;
+  --btn-hover: #f5f5f5;
+  --btn-border: #cfcfcf;
+  --ok: #0f7b0f;
+  --warn: #8a5300;
+  --err: #c42b1c;
+  --info-bg: #eaf3fb;
+  --warn-bg: #fff4ce;
+  --err-bg: #fde7e9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202020;
+    --card: #2b2b2b;
+    --card-active: #263340;
+    --text: #ffffff;
+    --muted: #c8c8c8;
+    --border: #3b3b3b;
+    --accent: #60cdff;
+    --accent-hover: #78d4ff;
+    --accent-text: #00263d;
+    --btn: #383838;
+    --btn-hover: #404040;
+    --btn-border: #4d4d4d;
+    --ok: #6ccb5f;
+    --warn: #f7c948;
+    --err: #ff99a4;
+    --info-bg: #1d3446;
+    --warn-bg: #433519;
+    --err-bg: #442726;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+main { max-width: 600px; margin: 0 auto; padding: 22px 20px 16px; min-height: 100%; display: flex; flex-direction: column; }
+h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; }
+.tagline { margin: 4px 0 18px; color: var(--muted); }
+
+#banner { margin: 0 0 12px; padding: 10px 14px; border-radius: 6px; border-left: 4px solid; }
+#banner[hidden] { display: none; }
+#banner.info { background: var(--info-bg); border-color: var(--accent); }
+#banner.warn { background: var(--warn-bg); border-color: var(--warn); }
+#banner.err { background: var(--err-bg); border-color: var(--err); }
+#banner .more { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; -webkit-user-select: text; user-select: text; }
+
+#devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.card {
+  display: grid; grid-template-columns: 40px 1fr auto; column-gap: 14px; align-items: center;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+}
+.card.active { background: var(--card-active); border-color: var(--accent); }
+.icon { width: 40px; height: 40px; display: grid; place-items: center; color: var(--muted); }
+.card.active .icon, .card.connected .icon { color: var(--text); }
+.icon svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.status { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--muted); flex: none; }
+.card.connected .dot { background: var(--ok); border-color: var(--ok); }
+.card.connected .status { color: var(--ok); }
+
+.job { grid-column: 2 / 4; margin-top: 8px; }
+.job[hidden] { display: none; }
+.job-line { display: flex; align-items: flex-start; gap: 8px; }
+.spinner { width: 14px; height: 14px; margin-top: 3px; flex: none; border-radius: 50%; border: 2px solid var(--btn-border); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+.spinner[hidden] { display: none; }
+.job .tip, .job .detail, .job .error { margin-top: 4px; font-size: 12px; -webkit-user-select: text; user-select: text; }
+.job .tip { color: var(--muted); }
+.job .detail { color: var(--muted); font-family: "Cascadia Mono", Consolas, monospace; }
+.job .error { color: var(--err); }
+.job.ok .job-line { color: var(--ok); }
+.job.bad .job-line { color: var(--err); }
+
+.action { align-self: start; }
+.btn {
+  min-width: 88px; height: 32px; padding: 0 16px; border-radius: 4px; border: 1px solid var(--btn-border);
+  background: var(--btn); color: var(--text); font: inherit; cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--btn-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#empty { margin: 24px 0; padding: 22px 18px; text-align: center; color: var(--muted); border: 1px dashed var(--btn-border); border-radius: 8px; }
+#empty[hidden] { display: none; }
+footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 12px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.card.active .dot { background: var(--warn); border-color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; border-top-color: var(--btn-border); }
+  .card.active .dot { animation: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>BlueLatch</h1>
+  <p class="tagline" id="tagline"></p>
+  <div id="banner" role="status" aria-live="polite" hidden></div>
+  <ul id="devices"></ul>
+  <p id="empty" hidden></p>
+  <footer><span id="ver"></span><span id="auto"></span></footer>
+</main>
+<script>
+'use strict';
+(function () {
+  var STR = {
+    en: {
+      tagline: 'Connects a paired Bluetooth audio device and keeps retrying until the connection holds.',
+      connected: 'Connected', disconnected: 'Not connected', connecting: 'Connecting…', connect: 'Connect', cancel: 'Cancel',
+      busy: 'Another device is being connected.',
+      starting: 'Starting…',
+      reconnecting: 'Attempt {n}: asking Windows to connect…',
+      waiting: 'Attempt {n}: waiting for the link…',
+      backoff: 'Not connected yet. Attempt {n} starts in {s} s.',
+      cancelling: 'Stopping… finishing the current request.',
+      closing: 'Closing… finishing the current request.',
+      doneConnectedNow: 'Connected.',
+      doneConnected: 'Connected after {n} attempt(s) in {t}.',
+      doneCancelled: 'Stopped after {n} attempt(s).',
+      doneFailed: 'Could not connect: {e}',
+      tip: 'Make sure the device is switched on, out of its case and within range.',
+      empty: 'No paired Bluetooth audio devices found. Pair one in Windows Settings first.',
+      noRadio: 'No Bluetooth radio found. Turn Bluetooth on in Windows Settings.',
+      readError: 'The Bluetooth devices cannot be read.',
+      noBridge: 'This page works only inside BlueLatch.',
+      auto: 'Refreshes automatically',
+      sec: 's',
+      errors: {
+        'no-radio': 'No Bluetooth radio found. Turn Bluetooth on.',
+        'not-paired': 'The device is not paired any more. Pair it again in Windows Settings.',
+        'no-services': 'Windows has no audio service installed for this device. Remove it in Windows Settings and pair it again.',
+        'gave-up': 'Gave up after the maximum number of attempts.'
+      }
+    },
+    zh: {
+      tagline: '连接已配对的蓝牙音频设备，并不断重试，直到连接稳定。',
+      connected: '已连接', disconnected: '未连接', connecting: '正在连接…', connect: '连接', cancel: '取消',
+      busy: '正在连接另一个设备。',
+      starting: '正在开始…',
+      reconnecting: '第 {n} 次尝试：正在请求 Windows 连接…',
+      waiting: '第 {n} 次尝试：等待连接建立…',
+      backoff: '尚未连接。第 {n} 次尝试将在 {s} 秒后开始。',
+      cancelling: '正在停止…正在完成当前请求。',
+      closing: '正在关闭…正在完成当前请求。',
+      doneConnectedNow: '已连接。',
+      doneConnected: '经过 {n} 次尝试，用时 {t}，已连接。',
+      doneCancelled: '已停止，共尝试 {n} 次。',
+      doneFailed: '无法连接：{e}',
+      tip: '请确认设备已开机、已从充电盒取出，并且在范围内。',
+      empty: '未找到已配对的蓝牙音频设备。请先在 Windows 设置中配对。',
+      noRadio: '未找到蓝牙适配器。请在 Windows 设置中打开蓝牙。',
+      readError: '无法读取蓝牙设备。',
+      noBridge: '此页面只能在 BlueLatch 中使用。',
+      auto: '自动刷新',
+      sec: '秒',
+      errors: {
+        'no-radio': '未找到蓝牙适配器。请打开蓝牙。',
+        'not-paired': '该设备已不再配对。请在 Windows 设置中重新配对。',
+        'no-services': 'Windows 没有为该设备安装音频服务。请在 Windows 设置中删除该设备并重新配对。',
+        'gave-up': '已达到最大尝试次数，已放弃。'
+      }
+    }
+  };
+
+  // The icons are fixed strings of this file; device names never go through innerHTML.
+  var ICONS = {
+    headphones: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>',
+    headset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path d="M20 20v.5a2.5 2.5 0 0 1-2.5 2.5H14"/></svg>',
+    speaker: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><circle cx="12" cy="15" r="3.5"/><circle cx="12" cy="7.5" r="1.2"/></svg>',
+    audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a8 8 0 0 1 0 11"/></svg>'
+  };
+
+  var lang = (function () {
+    var want = (typeof window.blLang === 'string' && window.blLang !== 'auto') ? window.blLang : (navigator.language || 'en');
+    return String(want).toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en';
+  })();
+  var S = STR[lang];
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+
+  function t(key, vars) {
+    var s = S[key];
+    if (s === undefined) { s = key; }
+    return s.replace(/\{(\w+)\}/g, function (m, name) { return vars && vars[name] !== undefined ? vars[name] : m; });
+  }
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls) { var e = document.createElement(tag); if (cls) { e.className = cls; } return e; }
+  function setText(node, text) { if (node.textContent !== text) { node.textContent = text; } }
+
+  function fmtDuration(ms) {
+    var s = Math.max(0, ms) / 1000;
+    if (s < 60) { return s.toFixed(1) + ' ' + t('sec'); }
+    var m = Math.floor(s / 60), r = Math.floor(s % 60);
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  var state = null;
+  var notice = '';
+  var noticeUntil = 0;
+  var cards = {};     // address -> the nodes of its card
+  var polling = false;
+
+  // ---- the text of a job ---------------------------------------------------
+  function running(job) { return !!job && !job.done; }
+  function visible(job, now) {
+    if (!job) { return false; }
+    if (!job.done) { return true; }
+    return now - job.doneAt < (job.phase === 'failed' ? 30000 : 8000);
+  }
+  function friendlyError(job) { return S.errors[job.errorCode] || job.error || ''; }
+
+  function jobText(job, now) {
+    var n = job.attempt, text;
+    switch (job.phase) {
+      case 'starting': text = t('starting'); break;
+      case 'reconnecting': text = t('reconnecting', { n: n }); break;
+      case 'waiting': text = t('waiting', { n: n }); break;
+      case 'backoff': text = t('backoff', { n: n + 1, s: Math.max(0, Math.ceil((job.nextAt - now) / 1000)) }); break;
+      case 'cancelling': text = t('cancelling'); break;
+      case 'connected': text = n === 0 ? t('doneConnectedNow') : t('doneConnected', { n: n, t: fmtDuration(job.elapsed) }); break;
+      case 'cancelled': text = t('doneCancelled', { n: n }); break;
+      case 'failed': text = t('doneFailed', { e: friendlyError(job) }); break;
+      default: text = '';
+    }
+    if (!job.done) { text += '  ·  ' + fmtDuration(now - job.startedAt); }
+    return text;
+  }
+
+  // ---- the cards -----------------------------------------------------------
+  function makeCard(address) {
+    var c = { address: address };
+    c.li = el('li', 'card');
+    c.icon = el('div', 'icon');
+    var body = el('div', 'body');
+    c.name = el('div', 'name');
+    c.status = el('div', 'status');
+    c.dot = el('span', 'dot');
+    c.stateText = el('span');
+    c.status.appendChild(c.dot);
+    c.status.appendChild(c.stateText);
+    body.appendChild(c.name);
+    body.appendChild(c.status);
+    c.action = el('div', 'action');
+    c.btn = el('button', 'btn');
+    c.btn.type = 'button';
+    c.btn.addEventListener('click', function () { onButton(c); });
+    c.action.appendChild(c.btn);
+
+    c.job = el('div', 'job');
+    c.job.hidden = true;
+    var line = el('div', 'job-line');
+    line.setAttribute('aria-live', 'polite');
+    c.spinner = el('span', 'spinner');
+    c.jobText = el('span');
+    line.appendChild(c.spinner);
+    line.appendChild(c.jobText);
+    c.tip = el('div', 'tip');
+    c.detail = el('div', 'detail');
+    c.error = el('div', 'error');
+    c.job.appendChild(line);
+    c.job.appendChild(c.tip);
+    c.job.appendChild(c.detail);
+    c.job.appendChild(c.error);
+
+    c.li.appendChild(c.icon);
+    c.li.appendChild(body);
+    c.li.appendChild(c.action);
+    c.li.appendChild(c.job);
+    return c;
+  }
+
+  function onButton(c) {
+    if (!state) { return; }
+    if (running(state.job) && state.job.address === c.address) {
+      window.blCancel().then(poll, showNotice);
+    } else {
+      window.blConnect(c.address).then(poll, function (e) { showNotice(e); poll(); });
+    }
+  }
+
+  function showNotice(e) {
+    notice = String(e && e.message ? e.message : e);
+    noticeUntil = Date.now() + 6000;
+    renderBanner();
+  }
+
+  function updateCard(c, d, job, now, closing) {
+    var mine = visible(job, now) && job.address === d.address;
+    var active = mine && running(job);
+    c.li.className = 'card' + (d.connected ? ' connected' : '') + (active ? ' active' : '');
+    if (c.kind !== d.kind) { c.kind = d.kind; c.icon.innerHTML = ICONS[d.kind] || ICONS.audio; }
+    setText(c.name, d.name);
+    setText(c.stateText, active ? t('connecting') : (d.connected ? t('connected') : t('disconnected')));
+
+    // The button: Cancel for the job of this card, Connect for the others, none for a connected device.
+    var anyRunning = running(job);
+    c.action.hidden = d.connected && !active;
+    if (active) {
+      setText(c.btn, t('cancel'));
+      c.btn.className = 'btn';
+      c.btn.disabled = job.phase === 'cancelling' || closing;
+      c.btn.title = '';
+    } else {
+      setText(c.btn, t('connect'));
+      c.btn.className = 'btn primary';
+      c.btn.disabled = anyRunning || closing;
+      c.btn.title = anyRunning ? t('busy') : '';
+    }
+    c.btn.setAttribute('aria-label', c.btn.textContent + ' ' + d.name);
+
+    c.job.hidden = !mine;
+    if (mine) { updateJob(c, job, now); }
+  }
+
+  function updateJob(c, job, now) {
+    setText(c.jobText, jobText(job, now));
+    c.spinner.hidden = job.done;
+    c.job.className = 'job' + (job.phase === 'connected' ? ' ok' : (job.phase === 'failed' ? ' bad' : ''));
+    var live = running(job) && job.phase !== 'cancelling';
+    setText(c.tip, live && job.attempt >= 2 ? t('tip') : '');
+    c.tip.hidden = c.tip.textContent === '';
+    setText(c.detail, live ? (job.detail || '') : '');
+    c.detail.hidden = c.detail.textContent === '';
+    setText(c.error, live ? (job.error || '') : '');
+    c.error.hidden = c.error.textContent === '';
+  }
+
+  // ---- the page ------------------------------------------------------------
+  function renderBanner() {
+    var b = $('banner'), kind = '', text = '', more = '';
+    if (state && state.closing) {
+      kind = 'info'; text = t('closing');
+    } else if (state && state.problem) {
+      kind = 'err';
+      if (state.problem.code === 'no-radio') { text = t('noRadio'); } else { text = t('readError'); more = state.problem.text || ''; }
+    } else if (notice && Date.now() < noticeUntil) {
+      kind = 'warn'; text = notice;
+    }
+    if (!kind) { b.hidden = true; return; }
+    b.hidden = false;
+    b.className = kind;
+    b.textContent = text;
+    if (more) { var m = el('span', 'more'); m.textContent = more; b.appendChild(m); }
+  }
+
+  function render() {
+    var now = Date.now();
+    var devices = state.devices || [];
+    var list = $('devices');
+
+    var seen = {};
+    devices.forEach(function (d, i) {
+      var c = cards[d.address];
+      if (!c) { c = cards[d.address] = makeCard(d.address); }
+      seen[d.address] = true;
+      updateCard(c, d, state.job, now, state.closing);
+      if (list.children[i] !== c.li) { list.insertBefore(c.li, list.children[i] || null); }
+    });
+    Object.keys(cards).forEach(function (address) {
+      if (!seen[address]) { cards[address].li.remove(); delete cards[address]; }
+    });
+
+    $('empty').hidden = !(devices.length === 0 && !state.problem);
+    setText($('ver'), state.version ? 'v' + state.version : '');
+    renderBanner();
+  }
+
+  function poll() {
+    if (polling) { return; }
+    if (typeof window.blState !== 'function') {
+      state = { devices: [], problem: { code: 'error', text: t('noBridge') } };
+      render();
+      return;
+    }
+    polling = true;
+    window.blState().then(function (s) { state = s; render(); }).catch(showNotice).then(function () { polling = false; });
+  }
+
+  // The countdown and the elapsed time move without the state changing.
+  function tick() {
+    if (!state) { return; }
+    var now = Date.now();
+    var job = state.job;
+    if (job) {
+      var c = cards[job.address];
+      if (c) {
+        if (visible(job, now)) { updateJob(c, job, now); } else if (!c.job.hidden) { render(); }
+      }
+    }
+    if (notice && now >= noticeUntil) { notice = ''; renderBanner(); }
+  }
+
+  // Keep the page as it is: no reload, find, print, zoom, or dropped files.
+  window.addEventListener('keydown', function (e) {
+    var k = String(e.key).toLowerCase();
+    if (e.key === 'F5' || e.key === 'F12' || ((e.ctrlKey || e.metaKey) && 'rpsuofg+-=0'.indexOf(k) >= 0 && k.length === 1)) { e.preventDefault(); }
+  }, true);
+  window.addEventListener('wheel', function (e) { if (e.ctrlKey) { e.preventDefault(); } }, { passive: false });
+  ['dragover', 'drop'].forEach(function (name) { window.addEventListener(name, function (e) { e.preventDefault(); }); });
+
+  setText($('tagline'), t('tagline'));
+  setText($('empty'), t('empty'));
+  setText($('auto'), t('auto'));
+  poll();
+  setInterval(poll, 500);
+  setInterval(tick, 250);
+})();
+</script>
+</body>
+</html>

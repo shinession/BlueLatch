@@ -36,6 +36,19 @@ func (s staticAdapter) Reconnect(bt.Address) (bt.ReconnectResult, error) {
 	return bt.ReconnectResult{}, errors.New("Reconnect was not expected")
 }
 
+// recoveringAdapter also implements bt.Recoverer.
+type recoveringAdapter struct {
+	staticAdapter
+	restored []bt.Restored
+	err      error
+	called   *bool
+}
+
+func (r recoveringAdapter) Recover() ([]bt.Restored, error) {
+	*r.called = true
+	return r.restored, r.err
+}
+
 var testDevices = []bt.Device{
 	{Name: "Example Speaker", Address: 0xAABBCCDDEE01, Class: 0x240414, Connected: true, Remembered: true, Authenticated: true,
 		Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceAVRCPTarget}},
@@ -156,6 +169,37 @@ func TestConnectToAConnectedDeviceReturnsAtOnce(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Connected after 0 attempt(s)") {
 		t.Errorf("stdout = %q, want the success line", stdout)
+	}
+}
+
+func TestConnectSwitchesOnServicesAnEarlierRunLeftOff(t *testing.T) {
+	called := false
+	c, stdout, stderr := newTestCLI(recoveringAdapter{
+		staticAdapter: staticAdapter{devices: testDevices},
+		restored:      []bt.Restored{{Device: "Example Buds", Address: 0xAABBCCDDEE02, Service: bt.ServiceA2DPSink}},
+		err:           errors.New("one record could not be read"),
+		called:        &called,
+	})
+
+	if code := c.run([]string{"connect", "Example Speaker"}); code != 0 {
+		t.Fatalf("connect = %d, stderr %q", code, stderr)
+	}
+	if !called {
+		t.Error("Recover was not called before connecting")
+	}
+	if !strings.Contains(stdout.String(), "Switched on the A2DP Sink service of Example Buds again") {
+		t.Errorf("stdout = %q, want the notice about the restored service", stdout)
+	}
+	if !strings.Contains(stderr.String(), "one record could not be read") {
+		t.Errorf("stderr = %q, want the warning", stderr)
+	}
+}
+
+func TestListDoesNotRecover(t *testing.T) {
+	called := false
+	c, _, _ := newTestCLI(recoveringAdapter{staticAdapter: staticAdapter{devices: testDevices}, called: &called})
+	if code := c.run([]string{"list"}); code != 0 || called {
+		t.Errorf("list = %d, Recover called = %v; want a read-only command that recovers nothing", code, called)
 	}
 }
 

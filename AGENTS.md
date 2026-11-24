@@ -28,10 +28,14 @@ BlueLatch is a Go program for Windows. It has these packages:
 
 - `internal/bt`: the Windows Bluetooth stack behind the `Adapter` interface. The platform-independent types and the interface are in the files without a `_windows` suffix. The Win32 calls (`bthprops.cpl`, through `golang.org/x/sys/windows`, no cgo) are in the `*_windows.go` files.
 - `internal/latch`: the retry engine. It knows nothing about Windows and talks to `bt.Adapter` only, so it is tested with a fake adapter and a fake clock.
+- `internal/appdir`: the per-user folder `%LocalAppData%\BlueLatch`.
 - `internal/logging`: the log file.
-- `cmd/bluelatch`: the command line. The window (WebView2, ADR 0003) is decided but not built yet. When it is built it must stay a thin layer over the same engine.
+- `internal/app`: what the window shows and does: the list of paired audio devices and at most one connection job. It uses the engine, and the window uses it.
+- `internal/ui`: the WebView2 window and its embedded page (`web/index.html`). A thin layer over `internal/app`.
+- `cmd/bluelatch`: the command line, a console program.
+- `cmd/bluelatch-gui`: the window, a GUI-subsystem program (ADR 0004).
 
-Do not put retry logic in a user interface. Do not call the Win32 API outside `internal/bt`. Do not introduce a second framework for a responsibility that one of these packages already covers.
+Do not put retry logic in a user interface. Do not call the Win32 Bluetooth API outside `internal/bt`, and do not call window APIs outside `internal/ui`. Do not introduce a second framework for a responsibility that one of these packages already covers.
 
 If a major architectural change is necessary, explain why the existing architecture is insufficient before implementing the change.
 
@@ -57,6 +61,7 @@ BlueLatch changes the state of the user's real Bluetooth devices.
 
 - Never remove a pairing and never change anything of a device other than switching its audio services off and on again.
 - A service that has been switched off must always be switched on again. `Reconnect` enables each service even when disabling it failed, and the engine never interrupts it.
+- Every switch is recorded in the journal before it is made (`internal/bt/journal.go`, ADR 0005), and closing the window waits for a request in progress. Keep both when changing `Reconnect` or the window.
 - Do not run `bluelatch connect`, or any other code that calls `Reconnect`, against the user's devices unless the user asked for that test. A device may be in use, for example a speaker that is playing. Reading (`list`, `Devices`, `Device`) is always safe.
 - Keep the program usable without administrator rights. If a change would need them, ask first. Test it from a process that is not elevated: a shell that is elevated hides the difference.
 - The scope of version 1 is classic Bluetooth audio devices (ADR 0002). Bluetooth LE devices are not listed by the Win32 API in use and are out of scope.
@@ -94,7 +99,7 @@ Changes should be verified proportionally to their risk. Prefer this order:
 
 Tests that need Bluetooth hardware are skipped unless `BLUELATCH_LIVE=1` is set, and they must be read-only.
 
-A change to the connection logic is not verified until it has been tried on a real device. Say so when it has not.
+A change to the connection logic is not verified until it has been tried on a real device. Say so when it has not. A change to the window or its page is checked in demo mode (`bluelatch-gui.exe -demo`), which touches no real device.
 
 Do not modify or weaken tests only to hide a real implementation failure. Do not claim that a test passed unless it was actually executed and passed. If verification cannot be completed, clearly state what was not verified and why.
 
@@ -102,7 +107,7 @@ Do not modify or weaken tests only to hide a real implementation failure. Do not
 
 Use the standard library and `golang.org/x/sys/windows`. Do not add a dependency when they already provide the functionality.
 
-The window (ADR 0003) will need a WebView2 binding that works without cgo. When it is added, explain the choice, prefer a maintained package, and record the version.
+The window uses `github.com/jchv/go-webview2` (ADR 0003), which brings `github.com/jchv/go-winloader`. Another dependency needs a reason, a maintained package, and a recorded version.
 
 Do not upgrade unrelated dependencies unless necessary for the requested task.
 
@@ -174,10 +179,14 @@ BlueLatch 是一个 Windows 下的 Go 程序，包含以下包：
 
 - `internal/bt`：隐藏在 `Adapter` 接口后面的 Windows 蓝牙栈。与平台无关的类型和接口放在没有 `_windows` 后缀的文件中。Win32 调用（通过 `golang.org/x/sys/windows` 调用 `bthprops.cpl`，不使用 cgo）放在 `*_windows.go` 文件中。
 - `internal/latch`：重试引擎。它不了解 Windows，只通过 `bt.Adapter` 工作，所以用假的 adapter 和假的时钟来测试。
+- `internal/appdir`：每个用户的文件夹 `%LocalAppData%\BlueLatch`。
 - `internal/logging`：日志文件。
-- `cmd/bluelatch`：命令行。窗口（WebView2，ADR 0003）已决定但尚未构建。构建时它必须只是同一个引擎之上的薄层。
+- `internal/app`：窗口显示和执行的内容：已配对音频设备的列表和至多一个连接任务。它使用引擎，窗口使用它。
+- `internal/ui`：WebView2 窗口及其嵌入的页面（`web/index.html`）。`internal/app` 之上的薄层。
+- `cmd/bluelatch`：命令行，控制台程序。
+- `cmd/bluelatch-gui`：窗口，GUI 子系统程序（ADR 0004）。
 
-不要把重试逻辑放进用户界面。不要在 `internal/bt` 之外调用 Win32 API。不要为这些包已经覆盖的职责再引入第二套框架。
+不要把重试逻辑放进用户界面。不要在 `internal/bt` 之外调用 Win32 蓝牙 API，也不要在 `internal/ui` 之外调用窗口 API。不要为这些包已经覆盖的职责再引入第二套框架。
 
 如果确实需要较大的架构调整，应在实施前说明现有架构为什么不够用。
 
@@ -203,6 +212,7 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 - 绝不要删除配对，也不要改动设备的其他任何内容，只允许把它的音频服务先关闭再打开。
 - 被关闭的服务必须总是被重新打开。`Reconnect` 即使在关闭失败时也会启用每个服务，引擎也绝不会中断它。
+- 每次开关在进行之前都会记录到待恢复记录中（`internal/bt/journal.go`，ADR 0005），关闭窗口会等待进行中的请求。修改 `Reconnect` 或窗口时要保留这两点。
 - 除非用户要求做这个测试，否则不要对用户的设备运行 `bluelatch connect`，或任何其他会调用 `Reconnect` 的代码。设备可能正在使用，例如正在播放的音箱。读取（`list`、`Devices`、`Device`）始终是安全的。
 - 保持程序在没有管理员权限的情况下可用。如果某个改动需要管理员权限，先询问。要在未提权的进程中测试：已提权的 shell 会掩盖这种差别。
 - 第 1 版的范围是经典蓝牙音频设备（ADR 0002）。所用的 Win32 API 不会列出蓝牙 LE 设备，它们不在范围内。
@@ -240,7 +250,7 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 需要蓝牙硬件的测试，除非设置了 `BLUELATCH_LIVE=1`，否则会被跳过，并且它们必须是只读的。
 
-对连接逻辑的修改，在真实设备上试过之前都不算验证过。没有试过时要明确说明。
+对连接逻辑的修改，在真实设备上试过之前都不算验证过。没有试过时要明确说明。对窗口或其页面的修改，在演示模式（`bluelatch-gui.exe -demo`）下检查，它不会触碰任何真实设备。
 
 不要仅仅为了让测试通过而修改或削弱测试，从而掩盖真实实现问题。除非测试实际执行并通过，否则不得声称测试已经通过。如果无法完成某项验证，应明确说明未验证的内容及原因。
 
@@ -248,7 +258,7 @@ BlueLatch 会改变用户真实蓝牙设备的状态。
 
 使用标准库和 `golang.org/x/sys/windows`。如果它们已经提供了所需功能，不要引入新的依赖。
 
-窗口（ADR 0003）需要一个不依赖 cgo 的 WebView2 绑定。加入时，要说明选择理由，优先使用维护活跃的包，并记录版本。
+窗口使用 `github.com/jchv/go-webview2`（ADR 0003），它会带入 `github.com/jchv/go-winloader`。再增加其他依赖，需要说明理由、选用维护活跃的包，并记录版本。
 
 除非当前任务确实需要，否则不要升级无关依赖。
 
