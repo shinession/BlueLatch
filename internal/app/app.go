@@ -1,16 +1,20 @@
 // Package app is what the window shows and does: the list of paired audio
-// devices, kept fresh, and at most one connection being retried. It is the layer
+// devices and the list of sound outputs, both kept fresh, at most one connection
+// being retried, and at most one change of the sound output. It is the layer
 // between the window and the retry engine. The window only reads Snapshot and
-// calls Connect and Cancel; it has no retry logic of its own.
+// calls Connect, Disconnect, Cancel and SwitchOutput; it has no retry logic of
+// its own.
 package app
 
 import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/shinession/bluelatch/internal/audio"
 	"github.com/shinession/bluelatch/internal/bt"
 	"github.com/shinession/bluelatch/internal/latch"
 )
@@ -24,6 +28,13 @@ var (
 
 	// ErrClosing is returned by Connect once Shutdown has been called.
 	ErrClosing = errors.New("the program is closing")
+
+	// ErrUnknownOutput is returned by SwitchOutput for an output that is not in
+	// the list.
+	ErrUnknownOutput = errors.New("the sound output is not in the list")
+
+	// ErrSwitching is returned by SwitchOutput while the output is being changed.
+	ErrSwitching = errors.New("the sound output is being switched")
 )
 
 // The kinds of job: retrying a connection, and dropping one.
@@ -54,7 +65,34 @@ type State struct {
 	Devices []DeviceView `json:"devices"`
 	Problem *Problem     `json:"problem,omitempty"` // the devices cannot be read
 	Job     *JobView     `json:"job,omitempty"`     // the connection being retried, or the last one
+	Sound   *SoundView   `json:"sound,omitempty"`   // the sound outputs; none without an audio adapter
 	Closing bool         `json:"closing"`
+}
+
+// SoundView is the sound outputs of Windows.
+type SoundView struct {
+	Outputs []OutputView `json:"outputs"`
+	Error   string       `json:"error,omitempty"`  // why the outputs cannot be read
+	Change  *ChangeView  `json:"change,omitempty"` // the change being made, or the last one
+}
+
+// OutputView is one sound output.
+type OutputView struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`    // speaker, headphones, headset, display or audio
+	Current bool   `json:"current"` // the default output
+}
+
+// ChangeView is a change of the default output that is being made, or the one
+// that has just ended.
+type ChangeView struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Done      bool   `json:"done"`
+	DoneAt    int64  `json:"doneAt,omitempty"` // Unix milliseconds
+	Error     string `json:"error,omitempty"`
+	ErrorCode string `json:"errorCode,omitempty"` // output-gone, not-switched or unsupported
 }
 
 // DeviceView is one paired audio device.
@@ -94,6 +132,7 @@ type JobView struct {
 // Config tunes an App.
 type Config struct {
 	Adapter bt.Adapter
+	Audio   audio.Adapter // the sound outputs; nil leaves them out
 	Policy  latch.Policy
 	Log     *slog.Logger
 	Version string
@@ -114,11 +153,16 @@ type App struct {
 	wg     sync.WaitGroup
 	kick   chan struct{}
 
+	soundMu sync.Mutex // held while the outputs are read and stored, so an older reading never replaces a newer one
+
 	mu          sync.Mutex
 	devices     []DeviceView
 	problem     *Problem
 	lastProblem string
 	job         *job
+	outputs     []OutputView
+	soundError  string
+	change      *ChangeView
 	closing     bool
 }
 
@@ -148,10 +192,11 @@ func New(cfg Config) *App {
 	}
 }
 
-// Start reads the devices once, so the first Snapshot is complete, and then keeps
-// reading them in the background until Shutdown.
+// Start reads the devices and the outputs once, so the first Snapshot is
+// complete, and then keeps reading them in the background until Shutdown.
 func (a *App) Start() {
 	a.refresh()
+	a.refreshSound()
 	a.wg.Add(1)
 	go a.poll()
 }
@@ -169,6 +214,14 @@ func (a *App) Snapshot() State {
 	if a.job != nil {
 		v := a.job.view
 		s.Job = &v
+	}
+	if a.cfg.Audio != nil {
+		sound := &SoundView{Outputs: append([]OutputView{}, a.outputs...), Error: a.soundError}
+		if a.change != nil {
+			v := *a.change
+			sound.Change = &v
+		}
+		s.Sound = sound
 	}
 	return s
 }
@@ -248,6 +301,57 @@ func (a *App) begin(address, kind, phase string) (*job, context.Context, bt.Addr
 	return j, ctx, addr, nil
 }
 
+// SwitchOutput makes the output with that ID the sound output of Windows, as
+// audio.Switch does it. It returns at once; Snapshot shows the outcome. It does
+// not wait for a connection job, and is not one.
+func (a *App) SwitchOutput(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closing {
+		return ErrClosing
+	}
+	if a.change != nil && !a.change.Done {
+		return ErrSwitching
+	}
+	i := slices.IndexFunc(a.outputs, func(o OutputView) bool { return o.ID == id })
+	if i < 0 {
+		return ErrUnknownOutput
+	}
+	change := &ChangeView{ID: id, Name: a.outputs[i].Name}
+	a.change = change
+	a.wg.Add(1)
+	go a.runSwitch(change)
+	return nil
+}
+
+// runSwitch changes the output and records how it went.
+func (a *App) runSwitch(change *ChangeView) {
+	defer a.wg.Done()
+	_, err := audio.Switch(a.cfg.Audio, change.ID, a.log)
+	a.refreshSound() // before the change is reported as done, so the list is right by then
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	change.Done = true
+	change.DoneAt = a.now().UnixMilli()
+	if err != nil {
+		change.Error = err.Error()
+		change.ErrorCode = outputErrorCode(err)
+	}
+}
+
+func outputErrorCode(err error) string {
+	switch {
+	case errors.Is(err, audio.ErrNotFound):
+		return "output-gone"
+	case errors.Is(err, audio.ErrNotSwitched):
+		return "not-switched"
+	case errors.Is(err, audio.ErrUnsupported):
+		return "unsupported"
+	}
+	return ""
+}
+
 // Cancel stops the connection that is being retried. A request that Windows is
 // working on is not interrupted, so the job ends when that request has returned.
 func (a *App) Cancel() {
@@ -267,9 +371,10 @@ func (a *App) cancelLocked() {
 }
 
 // Shutdown stops the connection that is being retried and the reading of the
-// devices, and waits for a request that Windows is working on to return, because
-// stopping in the middle of it could leave a service switched off. It reports
-// false when that took longer than timeout. It may be called more than once.
+// devices and outputs, and waits for a request that Windows is working on to
+// return, because stopping in the middle of it could leave a service switched
+// off. A change of the output is waited for too. It reports false when that took
+// longer than timeout. It may be called more than once.
 func (a *App) Shutdown(timeout time.Duration) bool {
 	a.mu.Lock()
 	a.closing = true
@@ -310,6 +415,44 @@ func (a *App) poll() {
 		case <-a.kick:
 		}
 		a.refresh()
+		a.refreshSound()
+	}
+}
+
+// refreshSound reads the sound outputs and which one is the default.
+func (a *App) refreshSound() {
+	if a.cfg.Audio == nil {
+		return
+	}
+	a.soundMu.Lock()
+	defer a.soundMu.Unlock()
+	state, err := a.cfg.Audio.State()
+
+	outputs := []OutputView{}
+	text := ""
+	if err != nil {
+		text = err.Error()
+	} else {
+		for _, o := range state.Outputs {
+			outputs = append(outputs, OutputView{
+				ID:      o.ID,
+				Name:    o.Name,
+				Kind:    string(o.Kind),
+				Current: o.ID == state.Defaults[audio.RoleConsole],
+			})
+		}
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.outputs = outputs
+	if text != a.soundError { // log a change, not every read
+		a.soundError = text
+		if text != "" {
+			a.log.Warn("the sound outputs cannot be read", "problem", text)
+		} else {
+			a.log.Info("the sound outputs can be read again")
+		}
 	}
 }
 

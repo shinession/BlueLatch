@@ -74,6 +74,29 @@ h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spac
 #banner.err { background: var(--err-bg); border-color: var(--err); }
 #banner .more { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; -webkit-user-select: text; user-select: text; }
 
+h2 { margin: 0 0 8px; font-size: 14px; line-height: 1.45; font-weight: 600; }
+section { margin: 0 0 18px; }
+section[hidden] { display: none; }
+
+#outputs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow: hidden; }
+#outputs:empty { display: none; }
+.output { position: relative; display: grid; grid-template-columns: 12px 24px 1fr auto; column-gap: 8px; align-items: center; min-height: 46px; padding: 6px 12px; }
+.output + .output { border-top: 1px solid var(--border); }
+.output.current { background: var(--card-active); }
+.output.current::before { content: ""; position: absolute; left: 0; top: 11px; bottom: 11px; width: 3px; border-radius: 2px; background: var(--accent); }
+.check { color: var(--accent); font-weight: 700; text-align: center; }
+.output .icon { width: 24px; height: 24px; }
+.output .icon svg { width: 22px; height: 22px; }
+.output.current .icon { color: var(--text); }
+.output .name { font-size: 14px; font-weight: 400; }
+.output.current .name { font-weight: 600; }
+.output .action { align-self: center; }
+.output .btn { min-width: 64px; height: 28px; padding: 0 10px; }
+#sound-note { margin: 6px 0 0; color: var(--err); font-size: 12px; -webkit-user-select: text; user-select: text; }
+#sound-note[hidden] { display: none; }
+#no-outputs { margin: 0; padding: 12px 18px; text-align: center; color: var(--muted); border: 1px dashed var(--btn-border); border-radius: 8px; }
+#no-outputs[hidden] { display: none; }
+
 #devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .card {
   display: grid; grid-template-columns: 40px 1fr auto; column-gap: 14px; align-items: center;
@@ -152,8 +175,17 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     </div>
   </header>
   <div id="banner" role="status" aria-live="polite" hidden></div>
-  <ul id="devices"></ul>
-  <p id="empty" hidden></p>
+  <section id="sound" aria-labelledby="sound-title" hidden>
+    <h2 id="sound-title"></h2>
+    <ul id="outputs"></ul>
+    <p id="no-outputs" hidden></p>
+    <p id="sound-note" role="alert" hidden></p>
+  </section>
+  <section aria-labelledby="bt-title">
+    <h2 id="bt-title"></h2>
+    <ul id="devices"></ul>
+    <p id="empty" hidden></p>
+  </section>
   <footer><span id="ver"></span><span id="auto"></span></footer>
 </main>
 <script>
@@ -164,6 +196,11 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
       tagline: 'Connects a paired Bluetooth audio device and keeps retrying until the connection holds.',
       connected: 'Connected', disconnected: 'Not connected', connecting: 'Connecting…', connect: 'Connect', cancel: 'Cancel',
       disconnect: 'Disconnect', disconnecting: 'Disconnecting…',
+      soundTitle: 'Sound output', btTitle: 'Bluetooth devices', switchTo: 'Switch', switching: 'Switching…',
+      currentOutput: 'Current output',
+      noOutputs: 'No sound output is available.',
+      soundError: 'The sound outputs cannot be read.',
+      switchFailed: 'Could not switch to {name}: {e}',
       busy: 'Wait for the current action to finish.',
       askDisconnect: 'Asking Windows to disconnect the device…',
       doneDisconnected: 'Disconnected. The device stays paired.',
@@ -191,13 +228,21 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
         'not-paired': 'The device is not paired any more. Pair it again in Windows Settings.',
         'no-services': 'Windows has no audio service installed for this device. Remove it in Windows Settings and pair it again.',
         'gave-up': 'Gave up after the maximum number of attempts.',
-        'still-connected': 'The device still reports being connected. It may have connected again by itself.'
+        'still-connected': 'The device still reports being connected. It may have connected again by itself.',
+        'output-gone': 'It is not available any more.',
+        'not-switched': 'Windows did not change the output.',
+        'unsupported': 'This Windows does not offer a way to change the output.'
       }
     },
     zh: {
       tagline: '连接已配对的蓝牙音频设备，并不断重试，直到连接稳定。',
       connected: '已连接', disconnected: '未连接', connecting: '正在连接…', connect: '连接', cancel: '取消',
       disconnect: '断开', disconnecting: '正在断开…',
+      soundTitle: '声音输出', btTitle: '蓝牙设备', switchTo: '切换', switching: '正在切换…',
+      currentOutput: '当前输出',
+      noOutputs: '没有可用的声音输出设备。',
+      soundError: '无法读取声音输出设备。',
+      switchFailed: '无法切换到 {name}：{e}',
       busy: '请等待当前操作完成。',
       askDisconnect: '正在请求 Windows 断开设备…',
       doneDisconnected: '已断开，设备仍保持配对。',
@@ -225,7 +270,10 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
         'not-paired': '该设备已不再配对。请在 Windows 设置中重新配对。',
         'no-services': 'Windows 没有为该设备安装音频服务。请在 Windows 设置中删除该设备并重新配对。',
         'gave-up': '已达到最大尝试次数，已放弃。',
-        'still-connected': '设备仍显示为已连接，它可能自己又连上了。'
+        'still-connected': '设备仍显示为已连接，它可能自己又连上了。',
+        'output-gone': '该设备已不可用。',
+        'not-switched': 'Windows 没有切换输出。',
+        'unsupported': '此 Windows 版本不支持切换输出。'
       }
     }
   };
@@ -235,6 +283,7 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     headphones: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>',
     headset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path d="M20 20v.5a2.5 2.5 0 0 1-2.5 2.5H14"/></svg>',
     speaker: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><circle cx="12" cy="15" r="3.5"/><circle cx="12" cy="7.5" r="1.2"/></svg>',
+    display: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16v4"/></svg>',
     audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a8 8 0 0 1 0 11"/></svg>'
   };
 
@@ -253,6 +302,8 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
   function $(id) { return document.getElementById(id); }
   function el(tag, cls) { var e = document.createElement(tag); if (cls) { e.className = cls; } return e; }
   function setText(node, text) { if (node.textContent !== text) { node.textContent = text; } }
+  // The one place that sets HTML: a fixed icon of this file, never device text.
+  function setIcon(node, kind) { if (node.dataset.kind !== kind) { node.dataset.kind = kind; node.innerHTML = ICONS[kind] || ICONS.audio; } }
 
   function fmtDuration(ms) {
     var s = Math.max(0, ms) / 1000;
@@ -265,6 +316,7 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
   var notice = '';
   var noticeUntil = 0;
   var cards = {};     // address -> the nodes of its card
+  var rows = Object.create(null); // ID of a sound output -> the nodes of its row
   var polling = false;
 
   // ---- the text of a job ---------------------------------------------------
@@ -364,7 +416,7 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     var dropping = active && job.kind === 'disconnect';
     var retrying = active && !dropping;
     c.li.className = 'card' + (d.connected ? ' connected' : '') + (active ? ' active' : '');
-    if (c.kind !== d.kind) { c.kind = d.kind; c.icon.innerHTML = ICONS[d.kind] || ICONS.audio; }
+    setIcon(c.icon, d.kind);
     setText(c.name, d.name);
     setText(c.stateText, retrying ? t('connecting') : (dropping ? t('disconnecting') : (d.connected ? t('connected') : t('disconnected'))));
 
@@ -406,6 +458,74 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
     c.error.hidden = c.error.textContent === '';
   }
 
+  // ---- the sound outputs ----------------------------------------------------
+  function makeRow(id) {
+    var r = { id: id };
+    r.li = el('li', 'output');
+    r.check = el('span', 'check');
+    r.check.setAttribute('aria-hidden', 'true');
+    r.icon = el('div', 'icon');
+    r.name = el('div', 'name');
+    r.action = el('div', 'action');
+    r.btn = el('button', 'btn');
+    r.btn.type = 'button';
+    r.btn.addEventListener('click', function () {
+      window.blSwitch(r.id).then(poll, function (e) { showNotice(e); poll(); });
+    });
+    r.action.appendChild(r.btn);
+    r.li.appendChild(r.check);
+    r.li.appendChild(r.icon);
+    r.li.appendChild(r.name);
+    r.li.appendChild(r.action);
+    return r;
+  }
+
+  // Every output has a Switch button, except the current one, which has a check
+  // mark. While a change is being made, no other change can start.
+  function updateRow(r, o, change, closing) {
+    var pending = !!change && !change.done;
+    var mine = pending && change.id === o.id;
+    r.li.className = 'output' + (o.current ? ' current' : '');
+    if (o.current) { r.li.setAttribute('aria-current', 'true'); r.li.title = t('currentOutput'); } else { r.li.removeAttribute('aria-current'); r.li.title = ''; }
+    setText(r.check, o.current ? '✓' : '');
+    setIcon(r.icon, o.kind);
+    setText(r.name, o.name);
+    r.action.hidden = o.current && !mine;
+    setText(r.btn, mine ? t('switching') : t('switchTo'));
+    r.btn.disabled = pending || closing;
+    r.btn.setAttribute('aria-label', r.btn.textContent + ' ' + o.name);
+  }
+
+  function renderSound(now) {
+    var sound = state.sound;
+    $('sound').hidden = !sound;
+    if (!sound) { return; }
+    var outputs = sound.outputs || [];
+    var list = $('outputs');
+
+    var seen = Object.create(null);
+    outputs.forEach(function (o, i) {
+      var r = rows[o.id] || (rows[o.id] = makeRow(o.id));
+      seen[o.id] = true;
+      updateRow(r, o, sound.change, state.closing);
+      if (list.children[i] !== r.li) { list.insertBefore(r.li, list.children[i] || null); }
+    });
+    Object.keys(rows).forEach(function (id) {
+      if (!seen[id]) { rows[id].li.remove(); delete rows[id]; }
+    });
+    $('no-outputs').hidden = !(outputs.length === 0 && !sound.error);
+
+    var note = '';
+    var change = sound.change;
+    if (sound.error) {
+      note = t('soundError') + ' ' + sound.error;
+    } else if (change && change.done && change.error && now - change.doneAt < 30000) {
+      note = t('switchFailed', { name: change.name, e: S.errors[change.errorCode] || change.error });
+    }
+    setText($('sound-note'), note);
+    $('sound-note').hidden = !note;
+  }
+
   // ---- the page ------------------------------------------------------------
   function renderBanner() {
     var b = $('banner'), kind = '', text = '', more = '';
@@ -443,6 +563,7 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
 
     $('empty').hidden = !(devices.length === 0 && !state.problem);
     setText($('ver'), state.version ? 'v' + state.version : '');
+    renderSound(now);
     renderBanner();
   }
 
@@ -480,6 +601,9 @@ footer { margin-top: auto; padding-top: 18px; color: var(--muted); font-size: 12
   ['dragover', 'drop'].forEach(function (name) { window.addEventListener(name, function (e) { e.preventDefault(); }); });
 
   setText($('tagline'), t('tagline'));
+  setText($('sound-title'), t('soundTitle'));
+  setText($('no-outputs'), t('noOutputs'));
+  setText($('bt-title'), t('btTitle'));
   setText($('empty'), t('empty'));
   setText($('auto'), t('auto'));
   poll();

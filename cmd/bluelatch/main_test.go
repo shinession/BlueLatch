@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shinession/bluelatch/internal/audio"
 	"github.com/shinession/bluelatch/internal/bt"
 	"github.com/shinession/bluelatch/internal/latch"
 )
@@ -118,6 +119,7 @@ func newTestCLI(adapter bt.Adapter) (c *cli, stdout, stderr *bytes.Buffer) {
 		stdout:     stdout,
 		stderr:     stderr,
 		newAdapter: func(*slog.Logger) (bt.Adapter, error) { return adapter, nil },
+		newAudio:   func(*slog.Logger) (audio.Adapter, error) { return nil, errors.New("the audio API was not expected") },
 		openLog:    func(bool) (*slog.Logger, func()) { return slog.New(slog.DiscardHandler), func() {} },
 		console:    &fakeConsole{},
 		showError:  func(string, string) {},

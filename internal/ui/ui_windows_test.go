@@ -8,20 +8,20 @@ import (
 )
 
 func TestThePageIsEmbeddedAndTalksToTheBoundFunctions(t *testing.T) {
-	for _, want := range []string{"<title>BlueLatch</title>", "blState", "blConnect", "blDisconnect", "blCancel", "Content-Security-Policy"} {
+	for _, want := range []string{"<title>BlueLatch</title>", "blState", "blConnect", "blDisconnect", "blCancel", "blSwitch", "Content-Security-Policy"} {
 		if !strings.Contains(indexHTML, want) {
 			t.Errorf("the embedded page lacks %q", want)
 		}
 	}
 }
 
-// The page sets the names of devices as text. A name is chosen by the device, so
-// it must never reach innerHTML, which is used only for the fixed icons.
+// The page sets the names of devices and outputs as text. A name is chosen by the
+// device, so it must never reach innerHTML, which is used only for the fixed icons.
 func TestThePageNeverPutsDeviceTextIntoInnerHTML(t *testing.T) {
 	if got := strings.Count(indexHTML, ".innerHTML"); got != 1 {
 		t.Errorf("the page uses innerHTML %d times, want exactly once (for the icons)", got)
 	}
-	if !strings.Contains(indexHTML, "c.icon.innerHTML = ICONS[") {
+	if !strings.Contains(indexHTML, "node.innerHTML = ICONS[kind] || ICONS.audio") {
 		t.Error("the one use of innerHTML is not the icon assignment")
 	}
 }

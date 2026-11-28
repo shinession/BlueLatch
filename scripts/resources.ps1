@@ -11,7 +11,7 @@
   tools\mkrsrc does the work, with the standard library only.
 
 .EXAMPLE
-  .\scripts\resources.ps1 -Version 0.1.3
+  .\scripts\resources.ps1 -Version 0.1.4
 #>
 [CmdletBinding()]
 param(

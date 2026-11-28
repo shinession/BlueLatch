@@ -6,11 +6,11 @@
 
 ## BlueLatch
 
-BlueLatch connects a paired Bluetooth audio device on Windows and keeps retrying until the connection holds. It is for the device that shows "Not connected" in Windows Settings after the first time and needs several clicks on **Connect**. It can also disconnect the device again.
+BlueLatch connects a paired Bluetooth audio device on Windows and keeps retrying until the connection holds. It is for the device that shows "Not connected" in Windows Settings after the first time and needs several clicks on **Connect**. It can also disconnect the device again, and switch the sound output of Windows, for example between a Bluetooth speaker and a monitor.
 
 ### Status
 
-Version 0.1.3: one program, `bluelatch.exe`. It is the window (a double click, or `bluelatch` in a terminal) and the command line (`bluelatch list`, `connect`, `disconnect`). Both connect and disconnect a device. The program carries the BlueLatch icon.
+Version 0.1.4: one program, `bluelatch.exe`. It is the window (a double click, or `bluelatch` in a terminal) and the command line (`bluelatch list`, `connect`, `disconnect`, `switch`). Both connect and disconnect a device, and switch the sound output. The program carries the BlueLatch icon.
 
 Verified on a real PC (Windows 11, Intel radio):
 
@@ -22,8 +22,10 @@ Verified on a real PC (Windows 11, Intel radio):
 - The request to disconnect, sent as a normal user for earbuds that were not connected: Windows answered "not connected", not an access error.
 - The icon: the program carries it with its version information, Windows extracts it at 16 to 256 px, and the title bar of the window shows it.
 - One program for both (ADR 0008): a double click, a shortcut, and `bluelatch window` in a terminal open the window. After a double click a terminal window shows for about 30 ms and none stays. From a terminal the prompt comes back at once. The command line still makes `cmd.exe` and PowerShell wait and gives them its exit codes.
+- Switching the sound output, from a process that was not elevated: `bluelatch switch` moved the default output from a Bluetooth speaker to a monitor and back, all three roles of Windows, and each change was read back (ADR 0009).
+- The list of outputs and its **Switch** buttons in the window: clicked in demo mode, where the check mark moves and the list follows the devices; the window also listed the real outputs, read-only.
 
-**Not verified yet:** the **Cancel** button of the window against a real device; earbuds that also have Hands-Free; `bluelatch disconnect` on a connected device, and whether some device connects again by itself after it was dropped; whether the reconnect request needs administrator rights (the log does not say whether the runs by the user were elevated); and the console window after a double click on a PC without Windows Terminal. See the live checks in [docs/runbook.md](docs/runbook.md).
+**Not verified yet:** the **Switch** button of the window against the real outputs; the outputs of a headset or earbuds with Hands-Free; the **Cancel** button of the window against a real device; earbuds that also have Hands-Free; `bluelatch disconnect` on a connected device, and whether some device connects again by itself after it was dropped; whether the reconnect request needs administrator rights (the log does not say whether the runs by the user were elevated); and the console window after a double click on a PC without Windows Terminal. See the live checks in [docs/runbook.md](docs/runbook.md).
 
 ### Requirements
 
@@ -33,7 +35,7 @@ Verified on a real PC (Windows 11, Intel radio):
 
 ### The window
 
-Start `release\bluelatch.exe` with a double click, or type `bluelatch` (or `bluelatch window`) in a terminal, where the prompt comes back at once. A console window shows for about 30 ms after a double click, because the program is a console program on purpose (ADR 0008). The window lists the paired audio devices and shows whether each is connected. **Connect** retries the connection of that device until it holds: the card shows the attempt, the elapsed time, and what Windows did. **Cancel** stops it. A device that is connected has a **Disconnect** button instead: it drops the connection, and the device stays paired (ADR 0007). One action runs at a time. The window follows the dark or light theme and the language of Windows (English or Chinese). Closing the window while Windows is working on a request waits for that request, which can take a few seconds.
+Start `release\bluelatch.exe` with a double click, or type `bluelatch` (or `bluelatch window`) in a terminal, where the prompt comes back at once. A console window shows for about 30 ms after a double click, because the program is a console program on purpose (ADR 0008). At the top, **Sound output** lists the outputs Windows can use now, with the current one checked; **Switch** on another row makes it the sound output of Windows. The default for calls follows when it was on the current output already, and stays where it is when you have set it to another one (ADR 0009). Below, the window lists the paired audio devices and shows whether each is connected. **Connect** retries the connection of that device until it holds: the card shows the attempt, the elapsed time, and what Windows did. **Cancel** stops it. A device that is connected has a **Disconnect** button instead: it drops the connection, and the device stays paired (ADR 0007). One action runs at a time. The window follows the dark or light theme and the language of Windows (English or Chinese). Closing the window while Windows is working on a request waits for that request, which can take a few seconds.
 
 To try it without touching a real device: `bluelatch window -demo -demo-connect "Demo Earbuds"`, or `bluelatch window -demo -demo-disconnect "Demo Speaker"`. All flags are in [docs/runbook.md](docs/runbook.md).
 
@@ -45,6 +47,7 @@ bluelatch window [-lang auto|en|zh] [-v] [-debug] [-demo]
 bluelatch list [-all] [-v]
 bluelatch connect [-v] [-attempt-timeout 10s] [-stable 2s] [-max-attempts N] <name or address>
 bluelatch disconnect [-v] [-wait 5s] <name or address>
+bluelatch switch [-v] [<name or ID>]
 bluelatch version
 ```
 
@@ -56,6 +59,8 @@ bluelatch version
 
 `disconnect` finds the device in the same way and asks Windows to drop its connection. It waits up to `-wait` for Windows to report the device as disconnected. The pairing and the services stay as they are, so `bluelatch connect` connects the device again. A device that is not connected is reported as such (exit code 0) and nothing is sent. When the device still reports being connected after `-wait`, the command fails with exit code 1, because some devices connect again by themselves.
 
+`switch` changes the sound output of Windows. Without a name it goes to the output after the current one in the list (sorted by name), so with two outputs it goes back and forth. With a name it goes to that output: its ID, a whole name, or a part of a name that is unique, case ignored, for example `bluelatch switch monitor`. An output that is the current one already is reported as such (exit code 0). It says where the calls stay when they do not follow. It fails with exit code 1 when there is no other output, nothing matches (the message lists the outputs), or Windows refuses.
+
 Exit codes: 0 success, 1 failure or stopped, 2 wrong command line.
 
 ### How it works
@@ -64,21 +69,24 @@ Windows has no documented call that simply connects a classic audio device. Blue
 
 Disconnect is a different request: it asks the radio to drop the connection of the device (`IOCTL_BTH_DISCONNECT_DEVICE`) and changes no service and no pairing (ADR 0007).
 
+The outputs are read with the Core Audio API. Windows has no documented call that changes the default output, so BlueLatch uses the undocumented `IPolicyConfig` interface, as other output switchers do, and reads the defaults again to check (ADR 0009). Every change is logged.
+
 ### Limits
 
 - Classic Bluetooth audio devices only: headphones, earbuds, speakers (ADR 0002). Bluetooth LE devices, such as most mice and keyboards, are not listed.
 - A device that is switched off, in its case, or out of range cannot be connected. BlueLatch keeps trying and connects as soon as the device is available.
 - A device that is disconnected may connect again by itself. That is up to the device; it has not been tried on a real device yet.
+- Switching depends on an interface that Microsoft does not document; a Windows update could break it. Only the default output changes, not the microphone, and not an output that an app was given in the volume mixer. A shortcut that runs `bluelatch switch` is expected to show a console window while it runs (not tried).
 - The window has no tray icon and no start with Windows.
 
 ### Build and test
 
 ```powershell
-.\scripts\build.ps1 -Version 0.1.3   # writes release\bluelatch.exe
+.\scripts\build.ps1 -Version 0.1.4   # writes release\bluelatch.exe
 go test ./... -count=1
 ```
 
-The icon and the version information are in committed resource files (`cmd\bluelatch\rsrc_windows_*.syso`), so building needs no other tool. To write them again, after a change of the icon or the version, run `.\scripts\resources.ps1 -Version 0.1.3` (see [docs/runbook.md](docs/runbook.md)).
+The icon and the version information are in committed resource files (`cmd\bluelatch\rsrc_windows_*.syso`), so building needs no other tool. To write them again, after a change of the icon or the version, run `.\scripts\resources.ps1 -Version 0.1.4` (see [docs/runbook.md](docs/runbook.md)).
 
 ### Documentation
 
@@ -92,11 +100,11 @@ The icon and the version information are in committed resource files (`cmd\bluel
 
 ## BlueLatch
 
-BlueLatch 在 Windows 上连接已配对的蓝牙音频设备，并不断重试，直到连接稳定。它面向这样的设备：第一次之后在 Windows 设置里显示"未连接"，需要多次点击 **Connect**。它也可以再把设备断开。
+BlueLatch 在 Windows 上连接已配对的蓝牙音频设备，并不断重试，直到连接稳定。它面向这样的设备：第一次之后在 Windows 设置里显示"未连接"，需要多次点击 **Connect**。它也可以再把设备断开，还能切换 Windows 的声音输出，例如在蓝牙音箱和显示器之间切换。
 
 ### 状态
 
-0.1.3 版：一个程序 `bluelatch.exe`。它既是窗口（双击，或在终端里输入 `bluelatch`），也是命令行（`bluelatch list`、`connect`、`disconnect`）。两者都能连接和断开设备。程序带有 BlueLatch 图标。
+0.1.4 版：一个程序 `bluelatch.exe`。它既是窗口（双击，或在终端里输入 `bluelatch`），也是命令行（`bluelatch list`、`connect`、`disconnect`、`switch`）。两者都能连接和断开设备，以及切换声音输出。程序带有 BlueLatch 图标。
 
 已在一台真实的电脑上验证（Windows 11，Intel 蓝牙适配器）：
 
@@ -108,8 +116,10 @@ BlueLatch 在 Windows 上连接已配对的蓝牙音频设备，并不断重试�
 - 以普通用户对一副未连接的耳塞发送断开请求：Windows 返回"未连接"，而不是访问错误。
 - 图标：程序带有它和版本信息，Windows 能在 16 到 256 像素下取出它，窗口的标题栏也显示它。
 - 一个程序兼顾两者（ADR 0008）：双击、快捷方式，以及在终端里输入 `bluelatch window`，都会打开窗口。双击之后会有一个终端窗口显示约 30 毫秒，没有窗口留下。从终端启动时提示符立即回来。命令行仍然让 `cmd.exe` 和 PowerShell 等待它，并把退出码交给它们。
+- 从未提权的进程切换声音输出：`bluelatch switch` 把默认输出从蓝牙音箱换到显示器又换回，Windows 的三个角色都换了，每次改变都重新读取确认过（ADR 0009）。
+- 窗口中的输出列表及其 **Switch** 按钮：在演示模式下点过，对勾会移动，列表会随设备变化；窗口也以只读方式列出过真实输出。
 
-**尚未验证：**窗口的 **Cancel** 按钮对真实设备的效果；同时带有 Hands-Free 的耳塞；在已连接的设备上执行 `bluelatch disconnect`，以及是否有设备被断开后会自己再连上；重新连接请求是否需要管理员权限（日志没有说明用户的运行是否已提权）；以及在没有 Windows Terminal 的电脑上双击之后的控制台窗口。参见 [docs/runbook.md](docs/runbook.md) 中的真机检查。
+**尚未验证：**窗口的 **Switch** 按钮对真实输出的效果；带 Hands-Free 的耳机或耳塞的输出；窗口的 **Cancel** 按钮对真实设备的效果；同时带有 Hands-Free 的耳塞；在已连接的设备上执行 `bluelatch disconnect`，以及是否有设备被断开后会自己再连上；重新连接请求是否需要管理员权限（日志没有说明用户的运行是否已提权）；以及在没有 Windows Terminal 的电脑上双击之后的控制台窗口。参见 [docs/runbook.md](docs/runbook.md) 中的真机检查。
 
 ### 要求
 
@@ -119,7 +129,7 @@ BlueLatch 在 Windows 上连接已配对的蓝牙音频设备，并不断重试�
 
 ### 窗口
 
-双击启动 `release\bluelatch.exe`，或者在终端里输入 `bluelatch`（或 `bluelatch window`），此时提示符会立即回来。双击之后会有一个控制台窗口显示约 30 毫秒，因为程序有意做成控制台程序（ADR 0008）。窗口列出已配对的音频设备，并显示每个设备是否已连接。**Connect** 会重试该设备的连接，直到连接稳定：卡片上显示尝试次数、已用时间以及 Windows 所做的操作。**Cancel** 停止重试。已连接的设备则显示 **Disconnect** 按钮：它断开连接，设备仍保持配对（ADR 0007）。同一时间只执行一个操作。窗口跟随 Windows 的深色或浅色主题和语言（英文或中文）。在 Windows 正在处理请求时关闭窗口，会等待该请求结束，这可能要几秒钟。
+双击启动 `release\bluelatch.exe`，或者在终端里输入 `bluelatch`（或 `bluelatch window`），此时提示符会立即回来。双击之后会有一个控制台窗口显示约 30 毫秒，因为程序有意做成控制台程序（ADR 0008）。顶部的 **Sound output**（中文界面为"声音输出"）列出 Windows 当前可用的输出，当前输出有对勾；在其他行上点 **Switch** 就把它设为 Windows 的声音输出。通话默认设备本来就在当前输出上时会一起切换，你单独设为别的设备时则保持不动（ADR 0009）。下面，窗口列出已配对的音频设备，并显示每个设备是否已连接。**Connect** 会重试该设备的连接，直到连接稳定：卡片上显示尝试次数、已用时间以及 Windows 所做的操作。**Cancel** 停止重试。已连接的设备则显示 **Disconnect** 按钮：它断开连接，设备仍保持配对（ADR 0007）。同一时间只执行一个操作。窗口跟随 Windows 的深色或浅色主题和语言（英文或中文）。在 Windows 正在处理请求时关闭窗口，会等待该请求结束，这可能要几秒钟。
 
 不触碰真实设备也能试用：`bluelatch window -demo -demo-connect "Demo Earbuds"`，或者 `bluelatch window -demo -demo-disconnect "Demo Speaker"`。所有参数见 [docs/runbook.md](docs/runbook.md)。
 
@@ -131,6 +141,7 @@ bluelatch window [-lang auto|en|zh] [-v] [-debug] [-demo]
 bluelatch list [-all] [-v]
 bluelatch connect [-v] [-attempt-timeout 10s] [-stable 2s] [-max-attempts N] <name or address>
 bluelatch disconnect [-v] [-wait 5s] <name or address>
+bluelatch switch [-v] [<name or ID>]
 bluelatch version
 ```
 
@@ -142,6 +153,8 @@ bluelatch version
 
 `disconnect` 用同样的方式查找设备，并请求 Windows 断开它的连接。它最多等待 `-wait` 这么久，等 Windows 报告设备已断开。配对和服务保持不变，所以 `bluelatch connect` 可以再把设备连上。未连接的设备会如实报告（退出码 0），什么也不发送。如果过了 `-wait` 设备仍显示为已连接，命令以退出码 1 失败，因为有些设备会自己再连上。
 
+`switch` 改变 Windows 的声音输出。不带名称时，它切到列表（按名称排序）中当前输出的下一个，所以只有两个输出时就是来回切换。带名称时切到那个输出：它的 ID、完整名称，或唯一的名称片段，不区分大小写，例如 `bluelatch switch monitor`。已经是当前输出时会如实说明（退出码 0）。通话没有跟着切换时，它会说明通话留在哪个设备上。没有别的输出、没有匹配项（消息里列出所有输出）或 Windows 拒绝时，以退出码 1 失败。
+
 退出码：0 成功，1 失败或被停止，2 命令行有误。
 
 ### 工作原理
@@ -150,21 +163,24 @@ Windows 没有文档化的调用可以直接连接经典蓝牙音频设备。Blu
 
 Disconnect 是另一种请求：它请求无线电适配器断开设备的连接（`IOCTL_BTH_DISCONNECT_DEVICE`），不改动任何服务和配对（ADR 0007）。
 
+输出用 Core Audio API 读取。Windows 没有改变默认输出的公开调用，所以 BlueLatch 像其他输出切换工具一样使用未公开的 `IPolicyConfig` 接口，并重新读取默认项来确认（ADR 0009）。每次改变都记入日志。
+
 ### 限制
 
 - 只支持经典蓝牙音频设备：耳机、耳塞、音箱（ADR 0002）。蓝牙 LE 设备（例如大多数鼠标和键盘）不会列出。
 - 已关机、在充电盒里或不在范围内的设备无法连接。BlueLatch 会不断重试，设备一可用就会连上。
 - 被断开的设备可能自己再连上。这由设备决定；尚未在真实设备上试过。
+- 切换依赖 Microsoft 未公开的接口，Windows 更新有可能让它失效。只改变默认输出，不改变麦克风，也不改变应用在音量混合器里单独指定的输出。快捷方式运行 `bluelatch switch` 时，预计会在命令运行期间显示一个控制台窗口（未试过）。
 - 窗口没有托盘图标，也没有随 Windows 启动。
 
 ### 构建与测试
 
 ```powershell
-.\scripts\build.ps1 -Version 0.1.3   # writes release\bluelatch.exe
+.\scripts\build.ps1 -Version 0.1.4   # writes release\bluelatch.exe
 go test ./... -count=1
 ```
 
-图标和版本信息在已提交的资源文件（`cmd\bluelatch\rsrc_windows_*.syso`）中，所以构建不需要其他工具。图标或版本变化后要重新写出它们，运行 `.\scripts\resources.ps1 -Version 0.1.3`（见 [docs/runbook.md](docs/runbook.md)）。
+图标和版本信息在已提交的资源文件（`cmd\bluelatch\rsrc_windows_*.syso`）中，所以构建不需要其他工具。图标或版本变化后要重新写出它们，运行 `.\scripts\resources.ps1 -Version 0.1.4`（见 [docs/runbook.md](docs/runbook.md)）。
 
 ### 文档
 

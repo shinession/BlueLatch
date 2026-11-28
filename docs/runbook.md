@@ -19,10 +19,10 @@ go test ./... -count=1
 ### Build
 
 ```powershell
-.\scripts\build.ps1 -Version 0.1.3   # writes release\bluelatch.exe
+.\scripts\build.ps1 -Version 0.1.4   # writes release\bluelatch.exe
 ```
 
-`bluelatch.exe` is the whole program, the command line and the window (4.1 MB). It is static and needs nothing next to it. It is a console program on purpose (ADR 0008), so do not build it with `-H=windowsgui`. The icon and the version information are part of it: the files `cmd\bluelatch\rsrc_windows_*.syso` are committed and linked by `go build` (see "Changing the icon or the version").
+`bluelatch.exe` is the whole program, the command line and the window (4.2 MB). It is static and needs nothing next to it. It is a console program on purpose (ADR 0008), so do not build it with `-H=windowsgui`. The icon and the version information are part of it: the files `cmd\bluelatch\rsrc_windows_*.syso` are committed and linked by `go build` (see "Changing the icon or the version").
 
 ### Running the window
 
@@ -41,11 +41,15 @@ The flags of `bluelatch window`:
 
 **Demo mode** shows the whole window without a real device: `bluelatch window -demo -demo-connect "Demo Earbuds"`. The earbuds connect on the third request, after about 34 s. Demo Headphones never connect, which is how to try **Cancel**. The demo speaker is connected: `-demo -demo-disconnect "Demo Speaker"` disconnects it, which takes about a second, and the **Disconnect** button does the same. A device that was disconnected needs its requests again (the earbuds three). Closing the window during a request waits for that request, as it does with a real device.
 
+The demo mode has made-up sound outputs too, and no real output is touched: a monitor, and one for each connected demo device. **Switch** moves the check mark. Disconnecting the demo speaker removes its output, and the monitor takes over; the output of the earbuds appears once they are connected.
+
 A second start of the window does not open a second window; it brings the open one to the front.
 
 ### Checking the page without Windows
 
-`internal/ui/web/index.html` talks to Go only through `window.blState`, `window.blConnect`, `window.blDisconnect`, and `window.blCancel`. To look at a state, put a `<script>` that defines these four (and `window.blLang`) before the script of the page, and open the file in headless Chrome, for example with `chrome --headless=new --screenshot=out.png --window-size=520,700 --virtual-time-budget=1500 page.html`. The state is a JSON object as described in architecture.md; times are Unix milliseconds, so write them as `Date.now() - 46300` in the mock. This was how the dark and light themes, English and Chinese, and the states idle, waiting, backoff, connected, failed, no radio, and no devices were checked for 0.1.1. For 0.1.2, the Chinese texts and the failed disconnection were checked in the same way.
+`internal/ui/web/index.html` talks to Go only through `window.blState`, `window.blConnect`, `window.blDisconnect`, `window.blCancel`, and `window.blSwitch`. To look at a state, put a `<script>` that defines these five (and `window.blLang`) before the script of the page, and open the file in headless Chrome, for example with `chrome --headless=new --screenshot=out.png --window-size=600,700 --virtual-time-budget=1500 page.html`. Below a width of about 500, headless Chrome cuts the right edge off the picture. The state is a JSON object as described in architecture.md; times are Unix milliseconds, so write them as `Date.now() - 46300` in the mock. This was how the dark and light themes, English and Chinese, and the states idle, waiting, backoff, connected, failed, no radio, and no devices were checked for 0.1.1. For 0.1.2, the Chinese texts and the failed disconnection were checked in the same way.
+
+To see the window itself without clicking by hand, `PrintWindow` of `user32.dll` with the flag 2 draws it into a bitmap, and the UI Automation `InvokePattern` clicks its buttons by their accessible names (`Switch <output name>`, `Connect <device name>`).
 
 ### Changing the icon or the version
 
@@ -53,8 +57,8 @@ The icon is `assets/logo/bluelatch.svg` (ADR 0006). When it changes, or when the
 
 ```powershell
 .\scripts\logo-frames.ps1               # only when the SVG changed: renders assets\logo\png\bluelatch-N.png (needs Chrome)
-.\scripts\resources.ps1 -Version 0.1.3  # writes cmd\bluelatch\rsrc_windows_*.syso, which are committed
-.\scripts\build.ps1 -Version 0.1.3
+.\scripts\resources.ps1 -Version 0.1.4  # writes cmd\bluelatch\rsrc_windows_*.syso, which are committed
+.\scripts\build.ps1 -Version 0.1.4
 ```
 
 Give the two scripts the same version as `build.ps1`: `resources.ps1` sets the version information of the files, `build.ps1` the version that `bluelatch version` and the footer of the window show. To check the result, `[System.Diagnostics.FileVersionInfo]::GetVersionInfo("release\bluelatch.exe")` shows the version information, and Windows can extract the icon of a program at a given size with `PrivateExtractIcons` of `user32.dll`.
@@ -65,10 +69,11 @@ Give the two scripts the same version as `build.ps1`: `resources.ps1` sets the v
 
 ```powershell
 $env:BLUELATCH_LIVE = '1'; go test ./internal/bt -run TestLiveDevices -v -count=1
+go test ./internal/audio -run TestLiveOutputs -v -count=1
 .\release\bluelatch.exe list -v
 ```
 
-Result on the development PC (2026-11-24): the paired audio devices are listed with their services, in an elevated process and in a normal one (integrity level Medium). A paired Bluetooth LE mouse is not listed (ADR 0002). `connect` to a device that was connected already returned at once without touching it. The window, started as a normal user, listed the same devices.
+Result on the development PC (2026-11-24): the paired audio devices are listed with their services, in an elevated process and in a normal one (integrity level Medium). A paired Bluetooth LE mouse is not listed (ADR 0002). `connect` to a device that was connected already returned at once without touching it. The window, started as a normal user, listed the same devices. The outputs test is new in 0.1.4: on 2026-11-28, from a process that was not elevated, it listed the two active outputs, a Bluetooth speaker and a monitor, with the speaker as the default of all three roles, and could create the object for `IPolicyConfig`; the whole test took 0.01 s.
 
 **2. The reconnect request (changes the state of a device; do it only with the user).**
 
@@ -128,6 +133,22 @@ Result (2026-11-24): done once by the user, on a speaker, in the window of 0.1.2
 - `FileVersionInfo` of `release\bluelatch.exe` reads 0.1.3, product "BlueLatch", description "BlueLatch", original file name `bluelatch.exe`. The subsystem in the PE header is 3 (console).
 - The unit tests cover the three console states with fakes, and a real `StartDetached`: the test binary starts itself again, and the new process reports 0 console processes and the variable `BLUELATCH_DETACHED`.
 
+**8. Switching the sound output (changes a setting of Windows; do it only with the user).**
+
+1. Choose a moment when nothing important is playing. Note the default output of each role with the outputs test of check 1.
+2. From a process that is **not elevated**, run `bluelatch switch -v` (with two outputs, to the other one).
+3. Check with the outputs test that the console and multimedia roles moved, and that the calls moved if they were on the old output.
+4. Switch back with `bluelatch switch -v "<name of the first output>"`, and check that all three roles are as at the start.
+5. Write down the lines "changed the default output" of the log, and what the output shows.
+
+Result (2026-11-28), with the permission of the user: from a process that was not elevated, `switch` moved all three roles from a Bluetooth speaker to a monitor ("Switched the sound output from ... to ...", exit code 0), the outputs test showed the monitor for all three roles, and `switch` with the name of the speaker moved all three back. The two switches were less than a second apart. Afterwards `switch` with the name of the current output printed "is already the sound output." and changed nothing, and a name that matches nothing failed with exit code 1 and listed the outputs. Not done: the **Switch** button of the window against the real outputs, calls on a separate output, and a headset with Hands-Free.
+
+**9. The checks of 0.1.4 that changed no real device and no real output (2026-11-28).**
+
+- Window in demo mode, in Chinese: the two made-up outputs with the speaker checked; **Switch** on the monitor moved the check mark, and back; after **Disconnect** of the demo speaker its output was gone and the monitor was the current one; after the demo earbuds connected (3 attempts, 34.0 s) their output appeared. The log shows "changed the default output" for each switch.
+- The window with the real adapters, read-only, nothing clicked: it listed the two real outputs with the speaker checked, with a long name of an output on one line.
+- The page with a mock back end in headless Chrome: dark and light theme, English and Chinese, a switch in progress, a failed switch, outputs that cannot be read, no outputs, and an output name that is HTML and has `{name}` in it, which was shown as text.
+
 ### The log file
 
 `%LocalAppData%\BlueLatch\bluelatch.log`, written by the program. Above 1 MiB it is moved to `bluelatch.log.1` when the program starts. `connect` prints the path on its first line. Send the log when a device will not connect: it holds every request with the Windows error codes.
@@ -152,6 +173,12 @@ Result (2026-11-24): done once by the user, on a speaker, in the window of 0.1.2
 | `bluelatch` opens the window instead of printing the usage | Since 0.1.3, `bluelatch` without a command opens the window. The usage is `bluelatch help`. |
 | `bluelatch: the window could not be started: ...` | Started from a terminal, the program could not start itself again for the window. The text says why. A double click opens the window in the same process. |
 | No window appears after `bluelatch` in a terminal | The window opens in another process, so a problem there does not show in the terminal. It is shown in a message box and written to the log file. |
+| `no sound output matches ...` | The name is not among the outputs that are active now; the message lists them. A Bluetooth speaker that is not connected is not one. |
+| `bluelatch switch: there is no other sound output to switch to` | Only one output is active. Connect or plug in another one. |
+| `Windows did not change the default output` (or, in the window, "Windows did not change the output.") | Windows accepted the change but another output is still the default. Send the log. The sound flyout of Windows still works. |
+| `Windows does not offer a way to change the default output: ...` | The `IPolicyConfig` interface is not there, for example after a Windows update (ADR 0009). Use the sound flyout of Windows. Send the log with the HRESULT. |
+| `making ... the default output (...): IPolicyConfig.SetDefaultEndpoint: ... (HRESULT 0x...)` | Windows refused the change. The meaning of the codes seen in practice is to be recorded in this table. |
+| Sound does not follow a switch | An app was given an output of its own in the volume mixer, or it keeps playing on the old one until it is restarted. That is up to the app (not tried). |
 
 ### Releasing
 
@@ -180,10 +207,10 @@ go test ./... -count=1
 ### 构建
 
 ```powershell
-.\scripts\build.ps1 -Version 0.1.3   # writes release\bluelatch.exe
+.\scripts\build.ps1 -Version 0.1.4   # writes release\bluelatch.exe
 ```
 
-`bluelatch.exe` 是整个程序，既是命令行也是窗口（4.1 MB）。它是静态的，旁边不需要任何其他文件。它有意做成控制台程序（ADR 0008），所以不要用 `-H=windowsgui` 构建它。图标和版本信息就在它里面：文件 `cmd\bluelatch\rsrc_windows_*.syso` 已提交，由 `go build` 链接（见"更换图标或版本"）。
+`bluelatch.exe` 是整个程序，既是命令行也是窗口（4.2 MB）。它是静态的，旁边不需要任何其他文件。它有意做成控制台程序（ADR 0008），所以不要用 `-H=windowsgui` 构建它。图标和版本信息就在它里面：文件 `cmd\bluelatch\rsrc_windows_*.syso` 已提交，由 `go build` 链接（见"更换图标或版本"）。
 
 ### 运行窗口
 
@@ -202,11 +229,15 @@ go test ./... -count=1
 
 **演示模式**不需要真实设备就能看到完整的窗口：`bluelatch window -demo -demo-connect "Demo Earbuds"`。Demo Earbuds 在第三个请求时连上，约 34 秒。Demo Headphones 永远连不上，用它来试 **Cancel**。Demo Speaker 是已连接的：`-demo -demo-disconnect "Demo Speaker"` 会断开它，约需一秒，**Disconnect** 按钮做的是同一件事。被断开的设备需要重新发出请求（Demo Earbuds 要三次）。在请求进行中关闭窗口，会像真实设备一样等待该请求。
 
+演示模式也有虚构的声音输出，不触碰任何真实输出：一台显示器，以及每个已连接的演示设备各一个。**Switch** 会移动对勾。断开 Demo Speaker 会移除它的输出，由显示器接替；Demo Earbuds 连上后，它的输出会出现。
+
 第二次启动窗口不会打开第二个窗口，而是把已打开的窗口带到前台。
 
 ### 不借助 Windows 检查页面
 
-`internal/ui/web/index.html` 只通过 `window.blState`、`window.blConnect`、`window.blDisconnect` 和 `window.blCancel` 与 Go 通信。要查看某个状态，在页面脚本之前放一个定义这四个函数（以及 `window.blLang`）的 `<script>`，然后用无头 Chrome 打开该文件，例如 `chrome --headless=new --screenshot=out.png --window-size=520,700 --virtual-time-budget=1500 page.html`。状态是 architecture.md 中描述的 JSON 对象；时间是 Unix 毫秒，所以在模拟数据中写成 `Date.now() - 46300`。0.1.1 的深色和浅色主题、英文和中文，以及空闲、等待、退避、已连接、失败、没有适配器和没有设备这些状态，就是这样检查的。0.1.2 的中文文案和断开失败的状态也是这样检查的。
+`internal/ui/web/index.html` 只通过 `window.blState`、`window.blConnect`、`window.blDisconnect`、`window.blCancel` 和 `window.blSwitch` 与 Go 通信。要查看某个状态，在页面脚本之前放一个定义这五个函数（以及 `window.blLang`）的 `<script>`，然后用无头 Chrome 打开该文件，例如 `chrome --headless=new --screenshot=out.png --window-size=600,700 --virtual-time-budget=1500 page.html`。宽度小于约 500 时，无头 Chrome 会把图片右侧裁掉。状态是 architecture.md 中描述的 JSON 对象；时间是 Unix 毫秒，所以在模拟数据中写成 `Date.now() - 46300`。0.1.1 的深色和浅色主题、英文和中文，以及空闲、等待、退避、已连接、失败、没有适配器和没有设备这些状态，就是这样检查的。0.1.2 的中文文案和断开失败的状态也是这样检查的。
+
+要在不手动点击的情况下查看窗口本身，可以用 `user32.dll` 的 `PrintWindow`（标志 2）把它画到位图里，用 UI Automation 的 `InvokePattern` 按可访问名称点击按钮（`Switch <output name>`、`Connect <device name>`）。
 
 ### 更换图标或版本
 
@@ -214,8 +245,8 @@ go test ./... -count=1
 
 ```powershell
 .\scripts\logo-frames.ps1               # only when the SVG changed: renders assets\logo\png\bluelatch-N.png (needs Chrome)
-.\scripts\resources.ps1 -Version 0.1.3  # writes cmd\bluelatch\rsrc_windows_*.syso, which are committed
-.\scripts\build.ps1 -Version 0.1.3
+.\scripts\resources.ps1 -Version 0.1.4  # writes cmd\bluelatch\rsrc_windows_*.syso, which are committed
+.\scripts\build.ps1 -Version 0.1.4
 ```
 
 给两个脚本使用与 `build.ps1` 相同的版本：`resources.ps1` 设置文件的版本信息，`build.ps1` 设置 `bluelatch version` 和窗口页脚显示的版本。要检查结果，`[System.Diagnostics.FileVersionInfo]::GetVersionInfo("release\bluelatch.exe")` 会显示版本信息，Windows 可以用 `user32.dll` 的 `PrivateExtractIcons` 取出程序在指定尺寸下的图标。
@@ -226,10 +257,11 @@ go test ./... -count=1
 
 ```powershell
 $env:BLUELATCH_LIVE = '1'; go test ./internal/bt -run TestLiveDevices -v -count=1
+go test ./internal/audio -run TestLiveOutputs -v -count=1
 .\release\bluelatch.exe list -v
 ```
 
-在开发用电脑上的结果（2026-11-24）：在已提权的进程和普通进程（完整性级别 Medium）中，都能列出已配对的音频设备及其服务。已配对的蓝牙 LE 鼠标不会被列出（ADR 0002）。对已经连接的设备执行 `connect`，会立即返回，并且不会触碰设备。以普通用户启动的窗口列出了同样的设备。
+在开发用电脑上的结果（2026-11-24）：在已提权的进程和普通进程（完整性级别 Medium）中，都能列出已配对的音频设备及其服务。已配对的蓝牙 LE 鼠标不会被列出（ADR 0002）。对已经连接的设备执行 `connect`，会立即返回，并且不会触碰设备。以普通用户启动的窗口列出了同样的设备。输出测试是 0.1.4 新增的：2026-11-28 从未提权的进程运行，它列出了两个可用输出（蓝牙音箱和显示器），音箱是三个角色的默认输出，并能创建 `IPolicyConfig` 对象；整个测试用时 0.01 秒。
 
 **2. 重新连接请求（会改变设备的状态；只能与用户一起做）。**
 
@@ -289,6 +321,22 @@ $env:BLUELATCH_LIVE = '1'; go test ./internal/bt -run TestLiveDevices -v -count=
 - `release\bluelatch.exe` 的 `FileVersionInfo` 读出 0.1.3、产品 "BlueLatch"、描述 "BlueLatch"、原始文件名 `bluelatch.exe`。PE 头中的子系统是 3（控制台）。
 - 单元测试用假对象覆盖了控制台的三种状态，并真实地测试了 `StartDetached`：测试程序再启动自己一次，新进程报告控制台进程数为 0，并且带有变量 `BLUELATCH_DETACHED`。
 
+**8. 切换声音输出（会改变 Windows 的设置；只能与用户一起做）。**
+
+1. 选一个没有重要声音在播放的时候。用检查 1 的输出测试记下每个角色的默认输出。
+2. 从**未提权**的进程运行 `bluelatch switch -v`（只有两个输出时，就切到另一个）。
+3. 用输出测试检查 console 和 multimedia 角色已经移动，通话原本在旧输出上时也移动了。
+4. 用 `bluelatch switch -v "<第一个输出的名称>"` 切回，检查三个角色都和开始时一样。
+5. 记录日志中的 "changed the default output" 行以及输出显示的内容。
+
+结果（2026-11-28），经用户许可：从未提权的进程，`switch` 把三个角色从蓝牙音箱换到显示器（"Switched the sound output from ... to ..."，退出码 0），输出测试显示三个角色都在显示器上；随后用音箱名称的 `switch` 又把三个角色换了回来。两次切换相隔不到一秒。之后用当前输出的名称执行 `switch`，打印 "is already the sound output."，没有改变任何东西；匹配不到的名称以退出码 1 失败，并列出所有输出。尚未做的：窗口的 **Switch** 按钮对真实输出的效果、通话在单独输出上的情况，以及带 Hands-Free 的耳机。
+
+**9. 0.1.4 中没有改变任何真实设备和真实输出的检查（2026-11-28）。**
+
+- 窗口演示模式（中文）：两个虚构输出，音箱打勾；在显示器上点 **Switch** 对勾移过去，再移回；对 Demo Speaker 执行 **Disconnect** 后它的输出消失，显示器成为当前输出；Demo Earbuds 连上后（3 次尝试、34.0 秒）它的输出出现。日志中每次切换都有 "changed the default output"。
+- 窗口使用真实 adapter，只读，没有点击任何东西：列出了两个真实输出，音箱打勾，较长的输出名称显示在一行内。
+- 在无头 Chrome 中用模拟后端查看页面：深色和浅色主题、英文和中文、切换进行中、切换失败、输出无法读取、没有输出，以及一个本身是 HTML 且含有 `{name}` 的输出名称，它按纯文本显示。
+
 ### 日志文件
 
 `%LocalAppData%\BlueLatch\bluelatch.log`，由程序写入。程序启动时，如果超过 1 MiB，会被移到 `bluelatch.log.1`。`connect` 在第一行打印它的路径。设备连不上时请把日志发来：它记录了每次请求及其 Windows 错误码。
@@ -313,6 +361,12 @@ $env:BLUELATCH_LIVE = '1'; go test ./internal/bt -run TestLiveDevices -v -count=
 | `bluelatch` 打开了窗口，而不是打印用法 | 从 0.1.3 起，不带命令的 `bluelatch` 打开窗口。用法请用 `bluelatch help`。 |
 | `bluelatch: the window could not be started: ...` | 从终端启动时，程序无法为窗口再启动自己一次。文本里说明了原因。双击则在同一个进程中打开窗口。 |
 | 在终端里输入 `bluelatch` 之后没有出现窗口 | 窗口在另一个进程中打开，所以那里的问题不会显示在终端里：它会显示在消息框里，并写入日志文件。 |
+| `no sound output matches ...` | 该名称不在当前可用的输出里；消息中列出了它们。未连接的蓝牙音箱不算输出。 |
+| `bluelatch switch: there is no other sound output to switch to` | 只有一个可用输出。连接或插入另一个。 |
+| `Windows did not change the default output`（窗口中为 "Windows 没有切换输出。"） | Windows 接受了改变，但默认输出仍是别的。把日志发来。Windows 的声音弹出面板仍然可用。 |
+| `Windows does not offer a way to change the default output: ...` | `IPolicyConfig` 接口不存在，例如在 Windows 更新之后（ADR 0009）。请使用 Windows 的声音弹出面板，并把带 HRESULT 的日志发来。 |
+| `making ... the default output (...): IPolicyConfig.SetDefaultEndpoint: ... (HRESULT 0x...)` | Windows 拒绝了改变。实际遇到的错误码的含义，将记录在这张表里。 |
+| 切换后声音没有跟过去 | 某个应用在音量混合器里被单独指定了输出，或者它要重启后才换到新输出。这取决于应用（未试过）。 |
 
 ### 发布
 

@@ -11,7 +11,7 @@
   that a double click gives it.
 
 .EXAMPLE
-  .\scripts\build.ps1 -Version 0.1.3
+  .\scripts\build.ps1 -Version 0.1.4
 #>
 [CmdletBinding()]
 param(

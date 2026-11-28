@@ -2,6 +2,20 @@
 
 ## Changelog
 
+### 0.1.4 (2026-11-28)
+
+Added:
+
+- The window lists the sound outputs under **Sound output**, with the current one checked and a **Switch** button on each of the others (ADR 0009). The paired Bluetooth devices follow under **Bluetooth devices**.
+- `bluelatch switch [-v] [<name or ID>]`: switches to the named output, or without a name to the next one in the list.
+- The console and multimedia defaults move together; the default for calls follows only when it was on the current output.
+- The package `internal/audio` (the switching rule and the Core Audio calls), and ADR 0009.
+- Made-up sound outputs in the demo mode of the window; they follow the made-up devices.
+
+Verified: `bluelatch switch` moved the default output to a monitor and back on the development PC, from a process that was not elevated. Not verified yet: the **Switch** button of the window against the real outputs, and the outputs of a headset with Hands-Free.
+
+Upgrading: copy `bluelatch.exe` from `release\`. Nothing has to be migrated. `scripts\resources.ps1` was run for 0.1.4.
+
 ### 0.1.3 (2026-11-24)
 
 Added:
@@ -66,7 +80,19 @@ The spike: `bluelatch list`, `bluelatch connect`, the retry engine, the log file
 
 ## 变更日志
 
-### 0.1.3（2026-11-24）
+### 0.1.4（2026-11-28）
+
+新增：
+
+- 窗口在 **Sound output**（声音输出）下列出声音输出，当前输出有对勾，其他每个有一个 **Switch** 按钮（ADR 0009）。已配对的蓝牙设备在下方的 **Bluetooth devices**（蓝牙设备）之下。
+- `bluelatch switch [-v] [<name or ID>]`：切换到指定的输出；不带名称时切到列表中的下一个。
+- console 和 multimedia 默认项一起移动；通话默认设备只有本来就在当前输出上时才跟着切换。
+- 包 `internal/audio`（切换规则和 Core Audio 调用），以及 ADR 0009。
+- 窗口演示模式下的虚构声音输出；它们随虚构设备变化。
+
+已验证：在开发用电脑上，从未提权的进程中，`bluelatch switch` 把默认输出换到显示器又换回。尚未验证：窗口的 **Switch** 按钮对真实输出的效果，以及带 Hands-Free 的耳机的输出。
+
+升级：从 `release\` 复制 `bluelatch.exe`。无需迁移任何东西。已为 0.1.4 运行过 `scripts\resources.ps1`。
 
 新增：
 

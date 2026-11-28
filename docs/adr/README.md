@@ -14,6 +14,7 @@ An ADR records a decision that was weighed between alternatives, and what follow
 | [0006](./0006-icon-snap-on-a-dark-tile.md) | The icon is Snap on a dark tile, embedded through a resource file that `tools/mkrsrc` writes | Accepted; built in 0.1.2 |
 | [0007](./0007-disconnect-drops-the-link.md) | Disconnect drops the connection and leaves everything else alone | Accepted; built in 0.1.2; tried by the user on one speaker, not on the earbuds |
 | [0008](./0008-one-executable-that-frees-its-console.md) | The command line and the window are one program, `bluelatch.exe`: a console program that frees its console when it opens the window | Accepted; built in 0.1.3; supersedes 0004 |
+| [0009](./0009-switch-the-default-output-with-ipolicyconfig.md) | The default sound output is changed with the undocumented `IPolicyConfig` interface; calls follow when they were on the default output | Accepted; built in 0.1.4 |
 
 ---
 
@@ -33,3 +34,4 @@ ADR 记录在多个备选方案之间权衡过的决定，以及由此带来的�
 | [0006](./0006-icon-snap-on-a-dark-tile.md) | 图标是深色底的 Snap，通过 `tools/mkrsrc` 生成的资源文件嵌入 | 已接受；已在 0.1.2 中构建 |
 | [0007](./0007-disconnect-drops-the-link.md) | Disconnect 只断开连接，不动其他任何东西 | 已接受；已在 0.1.2 中构建；用户在一台音箱上试过，尚未在耳塞上试过 |
 | [0008](./0008-one-executable-that-frees-its-console.md) | 命令行和窗口是同一个程序 `bluelatch.exe`：打开窗口时释放自己控制台的控制台程序 | 已接受；已在 0.1.3 中构建；取代 0004 |
+| [0009](./0009-switch-the-default-output-with-ipolicyconfig.md) | 用未公开的 `IPolicyConfig` 接口改变默认声音输出；通话原本在默认输出上时跟着切换 | 已接受；已在 0.1.4 中构建 |

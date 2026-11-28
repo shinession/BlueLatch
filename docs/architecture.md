@@ -2,37 +2,43 @@
 
 ## BlueLatch architecture
 
-This document describes what is implemented in version 0.1.3. What is planned is marked as planned.
+This document describes what is implemented in version 0.1.4. What is planned is marked as planned.
 
 ### Overview
 
-BlueLatch is one Go program for Windows, built without cgo (ADR 0008): `bluelatch.exe`. It is the command line (`list`, `connect`, `disconnect`, `version`) and the window (`bluelatch` without a command, or `bluelatch window`).
+BlueLatch is one Go program for Windows, built without cgo (ADR 0008): `bluelatch.exe`. It is the command line (`list`, `connect`, `disconnect`, `switch`, `version`) and the window (`bluelatch` without a command, or `bluelatch window`).
 
 ```text
 bluelatch.exe   (cmd/bluelatch, one console program)
       |                                      |
   command line                          window
-  list, connect, disconnect             bluelatch, bluelatch window
+  list, connect, disconnect, switch     bluelatch, bluelatch window
       |                                      |
       |                              internal/ui   WebView2 window, web/index.html
       |                                      |
-      |                              internal/app  device list, one job
+      |                              internal/app  device list, output list, one job
       |                                      |
-      +--------> internal/latch  (retry engine)  <--------+
-                        |
-                 bt.Adapter  (interface, internal/bt)
-                        |
-      internal/bt/*_windows.go ---> bthprops.cpl (Win32)
+      +-------------------+------------------+
+                          |
+            +-------------+---------------+
+            |                             |
+  internal/latch (retry engine)    internal/audio (switching rule)
+            |                             |
+  bt.Adapter (interface,           audio.Adapter (interface)
+  internal/bt)                            |
+            |                      internal/audio/*_windows.go ---> Core Audio (COM)
+  internal/bt/*_windows.go ---> bthprops.cpl (Win32)
 
 internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, WebView2 data)
 ```
 
 | Package | Responsibility |
 |---|---|
-| `cmd/bluelatch` | The program. The commands `list`, `connect`, `disconnect`, `version`, `help`: they pick the device the user named and print the progress of the engine. And the start of the window (`window.go`, `window_windows.go`, `console_windows.go`): how the process is attached to a console, the flags, single instance, start-up repair, then `ui.Run`. |
+| `cmd/bluelatch` | The program. The commands `list`, `connect`, `disconnect`, `switch`, `version`, `help`: they pick the device or the output the user named and print what happens. And the start of the window (`window.go`, `window_windows.go`, `console_windows.go`): how the process is attached to a console, the flags, single instance, start-up repair, then `ui.Run`. |
 | `internal/ui` | The WebView2 window and its page (`web/index.html`, embedded). |
-| `internal/app` | What the window shows and does: the list of paired audio devices, kept fresh, and at most one job (a connection or a disconnection). Also the demo adapter. |
+| `internal/app` | What the window shows and does: the list of paired audio devices and the sound outputs, kept fresh, at most one job (a connection or a disconnection), and at most one change of the output. Also the demo adapters. |
 | `internal/latch` | The retry engine, `Engine.Connect`. It knows nothing about Windows and uses `bt.Adapter` only. |
+| `internal/audio` | The sound outputs: the types (`Output`, `Role`, `State`), the `Adapter` interface, `Switch`, `Next`, `Find`, and the Windows implementation of the interface. |
 | `internal/bt` | The types (`Device`, `Address`, `Service`, `ClassOfDevice`), the `Adapter` interface, `Find`, the journal, and the Windows implementation of the interface. |
 | `internal/logging` | The log file. |
 | `internal/appdir` | The folder `%LocalAppData%\BlueLatch`. |
@@ -108,16 +114,42 @@ Ways out of the loop:
 
 Any other error from a request is not fatal: it is shown, and the engine waits for the link and tries again. A failed read of the device state counts as "not connected" for that read.
 
+### The sound outputs
+
+`audio.Adapter` has two calls: `State`, which returns the active outputs and the default one of each of the three roles of Windows (console, multimedia, communications), and `SetDefault`, which makes one output the default of one role.
+
+The Windows implementation calls the Core Audio COM interfaces through their method tables (`ole32.dll` and `golang.org/x/sys/windows`, no cgo). Each call runs on one locked thread with COM initialized, and releases everything before it returns.
+
+| Call | Used for |
+|---|---|
+| `CoCreateInstance` | Create `MMDeviceEnumerator`, and `CPolicyConfigClient`. |
+| `IMMDeviceEnumerator::EnumAudioEndpoints` | The outputs in the state *active*. On the development PC the two listed were the two that the sound flyout of Windows showed. |
+| `IMMDevice::GetId`, `IPropertyStore::GetValue` | The ID, the name (`PKEY_Device_FriendlyName`, for example "Speakers (Example Speaker)") and the form factor (`PKEY_AudioEndpoint_FormFactor`), which picks the icon. |
+| `IMMDeviceEnumerator::GetDefaultAudioEndpoint` | The default output of each role; none is an empty ID. |
+| `IPolicyConfig::SetDefaultEndpoint` | Change the default of one role. Undocumented (ADR 0009). |
+
+The list is sorted by name, so it does not move when the default changes. A name that is empty becomes the ID, and an output that cannot be read is left out (logged with `-v`).
+
+`audio.Switch(adapter, id, log)` is the rule for a switch, the same for the window and the command line:
+
+1. Read the state. An output that is not active any more is `audio.ErrNotFound`.
+2. The roles to change are console and multimedia, and communications too when it is on the current console default.
+3. Set each of those roles that does not have the output already. An error names the role.
+4. Read the state again and check that every role that was set has the output; otherwise it is `audio.ErrNotSwitched`.
+
+`bluelatch switch` without a name takes the output after the current one in the sorted list (`audio.Next`); with a name it takes the one that matches (`audio.Find`: the ID, or a whole name, or a unique part of a name, case ignored). It prints what it switched, says when the output is the default already (exit code 0), and fails with exit code 1 when there is no other output, nothing matches, or Windows refuses.
+
 ### The application layer
 
-`internal/app` keeps what the window shows. `App.Start` reads the devices once and then every two seconds; `App.Snapshot` returns the state, which is rendered as JSON:
+`internal/app` keeps what the window shows. `App.Start` reads the devices and the sound outputs once and then every two seconds; `App.Snapshot` returns the state, which is rendered as JSON:
 
 - `devices`: the paired audio devices with their name, address, kind (`headphones`, `headset`, `speaker`, `audio`, from the minor class), and whether they are connected.
 - `problem`: `no-radio`, or `error` with the text, when the devices cannot be read. A change of the problem is logged, not every read.
 - `job`: the connection being retried or dropped, or the last one: its kind (`connect` or `disconnect`), device, phase (`starting`, `reconnecting`, `waiting`, `backoff`, `cancelling`, `connected` for a connection; `disconnecting`, `disconnected` for a disconnection; `cancelled` and `failed` for both), attempt, start time, the time of the next attempt, the detail of what Windows did, the error, and an error code (`no-radio`, `not-paired`, `no-services`, `gave-up`, `still-connected`).
+- `sound`: the outputs (ID, name, kind, and whether it is the current one, which is the console default), the error when they cannot be read, and `change`, the switch being made or the last one: its output, whether it is done, the error, and an error code (`output-gone`, `not-switched`, `unsupported`). It is left out when the app has no audio adapter.
 - `closing`: the program is shutting down.
 
-`Connect` and `Disconnect` start a job and return at once. Only one job runs at a time (`ErrBusy`), of either kind. A disconnection that finds the device not connected counts as done. `Cancel` marks the job as `cancelling` and cancels its context. `Shutdown(timeout)` cancels the job and the reading, and waits for the request that Windows is working on; it reports false after the timeout. `NewDemo` is an adapter with made-up devices for trying the window.
+`Connect` and `Disconnect` start a job and return at once. Only one job runs at a time (`ErrBusy`), of either kind. A disconnection that finds the device not connected counts as done. `Cancel` marks the job as `cancelling` and cancels its context. `SwitchOutput` starts a switch (`audio.Switch`) and returns at once; only one runs at a time (`ErrSwitching`), it can run while a job runs, and the outputs are read again before it is reported as done. `Shutdown(timeout)` cancels the job and the reading, and waits for the request that Windows is working on and for a switch; it reports false after the timeout. `NewDemo` returns adapters with made-up devices and made-up outputs for trying the window: a monitor is always an output, a device is one while it is connected, and the monitor takes over when the default output goes away.
 
 ### How the program starts
 
@@ -152,8 +184,9 @@ The flags of `bluelatch window`:
 
 `ui.Run` uses `github.com/jchv/go-webview2` (ADR 0003):
 
-- The page is `web/index.html`, embedded in the executable. It loads nothing from outside (content security policy), and sets the names of devices as text.
-- Four functions are bound: `blState()`, `blConnect(address)`, `blDisconnect(address)`, `blCancel()`. They return at once. The page calls `blState` every 500 ms and draws the cards from the state; a second timer updates the elapsed time and the countdown. A finished job disappears from its card after 8 s (30 s for a failure).
+- The page is `web/index.html`, embedded in the executable. It loads nothing from outside (content security policy), and sets the names of devices and outputs as text.
+- Five functions are bound: `blState()`, `blConnect(address)`, `blDisconnect(address)`, `blCancel()`, `blSwitch(id)`. They return at once. The page calls `blState` every 500 ms and draws the list of outputs and the cards from the state; a second timer updates the elapsed time and the countdown. A finished job disappears from its card after 8 s (30 s for a failure).
+- The section *Sound output* is at the top: one row for each output, with an icon for its kind. The current one has a check mark; each of the others has a **Switch** button. While a switch is made, the buttons are disabled and the one clicked says "Switching…". A switch that failed is explained under the list for 30 s. The cards of the Bluetooth devices follow under *Bluetooth devices*.
 - A card has one button: Cancel while that device is being connected, Disconnect when it is connected, Connect otherwise. While a job runs, the buttons of the other cards are disabled. The header of the page shows the icon, and the title bar and the taskbar button get the icon of the program in the size that fits the DPI of the window (`setWindowIcons`).
 - The page follows the dark or light theme of Windows. The title bar is switched to dark when the apps of the user use the dark theme. The process is per-monitor DPI aware and the window is scaled to the system DPI. WebView2 keeps its data in `%LocalAppData%\BlueLatch\WebView2`.
 - The page blocks reload (F5, Ctrl+R), print, save, find, zoom, and dropped files, because the page was loaded from a string and a reload would empty it.
@@ -166,7 +199,7 @@ The flags of `bluelatch window`:
 
 ### Logging
 
-`internal/logging` writes `%LocalAppData%\BlueLatch\bluelatch.log` (text, English). Above 1 MiB the file is moved to `bluelatch.log.1` when the program starts (one previous log is kept). Every request is logged with the outcome of each service, including the Windows error codes. `-v` adds a line for every read of the device state, and the command line also writes to stderr.
+`internal/logging` writes `%LocalAppData%\BlueLatch\bluelatch.log` (text, English). Above 1 MiB the file is moved to `bluelatch.log.1` when the program starts (one previous log is kept). Every request is logged with the outcome of each service, including the Windows error codes, and every change of the default output with the outputs and the roles (a failure with the HRESULT). `-v` adds a line for every read of the device state, and the command line also writes to stderr.
 
 ### Not verified yet
 
@@ -179,6 +212,11 @@ The flags of `bluelatch window`:
 - Whether Windows reports no radio (`bt.ErrNoRadio`) while Bluetooth is turned off. It was not tried, because turning Bluetooth off disconnects the devices in use.
 - A PC with more than one Bluetooth radio.
 - How long the console window shows after a double click on a PC without Windows Terminal, and on another PC in general (ADR 0008).
+- The **Switch** button of the window against the real outputs. Switching was tried with `bluelatch switch` (runbook, check 8); the button was clicked in demo mode only.
+- Which outputs a headset or earbuds with Hands-Free add to the list, and switching to them.
+- Whether sound that is playing moves at once when the default changes. That is up to the app that plays it.
+- A switch while calls are on a separate output, and a PC where `IPolicyConfig` is missing.
+- What is seen when a shortcut runs `bluelatch switch`. As for the window (ADR 0008), Windows is expected to give the command a console window while it runs.
 
 ---
 
@@ -186,37 +224,43 @@ The flags of `bluelatch window`:
 
 ## BlueLatch 架构
 
-本文档描述 0.1.3 版中已实现的内容。计划中的内容会标明是计划。
+本文档描述 0.1.4 版中已实现的内容。计划中的内容会标明是计划。
 
 ### 概览
 
-BlueLatch 是一个 Windows 下的 Go 程序，不使用 cgo 构建（ADR 0008）：`bluelatch.exe`。它既是命令行（`list`、`connect`、`disconnect`、`version`），也是窗口（不带命令的 `bluelatch`，或者 `bluelatch window`）。
+BlueLatch 是一个 Windows 下的 Go 程序，不使用 cgo 构建（ADR 0008）：`bluelatch.exe`。它既是命令行（`list`、`connect`、`disconnect`、`switch`、`version`），也是窗口（不带命令的 `bluelatch`，或者 `bluelatch window`）。
 
 ```text
 bluelatch.exe   (cmd/bluelatch, one console program)
       |                                      |
   command line                          window
-  list, connect, disconnect             bluelatch, bluelatch window
+  list, connect, disconnect, switch     bluelatch, bluelatch window
       |                                      |
       |                              internal/ui   WebView2 window, web/index.html
       |                                      |
-      |                              internal/app  device list, one job
+      |                              internal/app  device list, output list, one job
       |                                      |
-      +--------> internal/latch  (retry engine)  <--------+
-                        |
-                 bt.Adapter  (interface, internal/bt)
-                        |
-      internal/bt/*_windows.go ---> bthprops.cpl (Win32)
+      +-------------------+------------------+
+                          |
+            +-------------+---------------+
+            |                             |
+  internal/latch (retry engine)    internal/audio (switching rule)
+            |                             |
+  bt.Adapter (interface,           audio.Adapter (interface)
+  internal/bt)                            |
+            |                      internal/audio/*_windows.go ---> Core Audio (COM)
+  internal/bt/*_windows.go ---> bthprops.cpl (Win32)
 
 internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, WebView2 data)
 ```
 
 | 包 | 职责 |
 |---|---|
-| `cmd/bluelatch` | 程序本身。命令 `list`、`connect`、`disconnect`、`version`、`help`：它们找出用户指定的设备，并打印引擎的进度。还有窗口的启动（`window.go`、`window_windows.go`、`console_windows.go`）：进程如何附着在控制台上、参数、单实例、启动时的修复，然后调用 `ui.Run`。 |
+| `cmd/bluelatch` | 程序本身。命令 `list`、`connect`、`disconnect`、`switch`、`version`、`help`：它们找出用户指定的设备或输出，并打印发生了什么。还有窗口的启动（`window.go`、`window_windows.go`、`console_windows.go`）：进程如何附着在控制台上、参数、单实例、启动时的修复，然后调用 `ui.Run`。 |
 | `internal/ui` | WebView2 窗口及其页面（`web/index.html`，已嵌入）。 |
-| `internal/app` | 窗口显示和执行的内容：已配对音频设备的列表（保持刷新），以及至多一个任务（连接或断开）。还有演示用的 adapter。 |
+| `internal/app` | 窗口显示和执行的内容：已配对音频设备的列表和声音输出（保持刷新）、至多一个任务（连接或断开），以及至多一次输出切换。还有演示用的 adapter。 |
 | `internal/latch` | 重试引擎 `Engine.Connect`。它不了解 Windows，只使用 `bt.Adapter`。 |
+| `internal/audio` | 声音输出：类型（`Output`、`Role`、`State`）、`Adapter` 接口、`Switch`、`Next`、`Find`，以及该接口的 Windows 实现。 |
 | `internal/bt` | 类型（`Device`、`Address`、`Service`、`ClassOfDevice`）、`Adapter` 接口、`Find`、待恢复记录，以及该接口的 Windows 实现。 |
 | `internal/logging` | 日志文件。 |
 | `internal/appdir` | 文件夹 `%LocalAppData%\BlueLatch`。 |
@@ -292,16 +336,42 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 请求返回的其他错误都不是致命的：会显示出来，引擎仍会等待连接并再次尝试。读取设备状态失败时，该次读取按"未连接"处理。
 
+### 声音输出
+
+`audio.Adapter` 有两个调用：`State` 返回可用的输出，以及 Windows 三个角色（console、multimedia、communications）各自的默认输出；`SetDefault` 把某个输出设为一个角色的默认输出。
+
+Windows 实现按方法表调用 Core Audio 的 COM 接口（`ole32.dll` 和 `golang.org/x/sys/windows`，不使用 cgo）。每次调用都在一个锁定并初始化了 COM 的线程上运行，返回之前释放所有东西。
+
+| 调用 | 用途 |
+|---|---|
+| `CoCreateInstance` | 创建 `MMDeviceEnumerator` 和 `CPolicyConfigClient`。 |
+| `IMMDeviceEnumerator::EnumAudioEndpoints` | 处于 *active* 状态的输出。在开发用电脑上，列出的两个正是 Windows 声音弹出面板显示的两个。 |
+| `IMMDevice::GetId`、`IPropertyStore::GetValue` | ID、名称（`PKEY_Device_FriendlyName`，例如 "Speakers (Example Speaker)"）和外形类型（`PKEY_AudioEndpoint_FormFactor`），后者决定图标。 |
+| `IMMDeviceEnumerator::GetDefaultAudioEndpoint` | 每个角色的默认输出；没有则 ID 为空。 |
+| `IPolicyConfig::SetDefaultEndpoint` | 改变一个角色的默认输出。未公开接口（ADR 0009）。 |
+
+列表按名称排序，所以默认输出变化时它不会移动。名称为空时用 ID 代替，读不出来的输出会被略过（`-v` 时记入日志）。
+
+`audio.Switch(adapter, id, log)` 是切换的规则，窗口和命令行用同一套：
+
+1. 读取状态。已经不再可用的输出是 `audio.ErrNotFound`。
+2. 要改变的角色是 console 和 multimedia；当 communications 就在当前的 console 默认输出上时，也包括它。
+3. 对其中还没有在该输出上的角色逐个设置。出错时会指明是哪个角色。
+4. 重新读取状态，检查每个设置过的角色都在该输出上；否则是 `audio.ErrNotSwitched`。
+
+不带名称的 `bluelatch switch` 取排序列表中当前输出的下一个（`audio.Next`）；带名称时取匹配的那一个（`audio.Find`：ID，或完整名称，或名称中唯一的片段，不区分大小写）。它打印切换了什么；输出本来就是默认时会如实说明（退出码 0）；没有别的输出、没有匹配项或 Windows 拒绝时以退出码 1 失败。
+
 ### 应用层
 
-`internal/app` 保存窗口显示的内容。`App.Start` 先读取一次设备，之后每两秒读取一次；`App.Snapshot` 返回状态，状态以 JSON 渲染：
+`internal/app` 保存窗口显示的内容。`App.Start` 先读取一次设备和声音输出，之后每两秒读取一次；`App.Snapshot` 返回状态，状态以 JSON 渲染：
 
 - `devices`：已配对的音频设备，含名称、地址、类型（`headphones`、`headset`、`speaker`、`audio`，由次要类别得出），以及是否已连接。
 - `problem`：无法读取设备时为 `no-radio`，或带文本的 `error`。问题发生变化时才记录日志，而不是每次读取都记录。
 - `job`：正在重试或正在断开的连接，或最近一次的：种类（`connect` 或 `disconnect`）、设备、阶段（连接用 `starting`、`reconnecting`、`waiting`、`backoff`、`cancelling`、`connected`；断开用 `disconnecting`、`disconnected`；两者都可能是 `cancelled` 和 `failed`）、尝试次数、开始时间、下一次尝试的时间、Windows 所做操作的详情、错误，以及错误码（`no-radio`、`not-paired`、`no-services`、`gave-up`、`still-connected`）。
+- `sound`：各个输出（ID、名称、类型，以及是否是当前输出，即 console 默认输出）、无法读取时的错误，以及 `change`——正在进行的或最近一次切换：目标输出、是否结束、错误和错误码（`output-gone`、`not-switched`、`unsupported`）。应用没有音频 adapter 时不包含它。
 - `closing`：程序正在关闭。
 
-`Connect` 和 `Disconnect` 启动一个任务并立即返回。同一时间只运行一个任务（`ErrBusy`），不论哪种。断开时发现设备并未连接，也算完成。`Cancel` 把任务标记为 `cancelling` 并取消它的上下文。`Shutdown(timeout)` 取消任务和读取，并等待 Windows 正在处理的请求；超时后返回 false。`NewDemo` 是带虚构设备的 adapter，用于试用窗口。
+`Connect` 和 `Disconnect` 启动一个任务并立即返回。同一时间只运行一个任务（`ErrBusy`），不论哪种。断开时发现设备并未连接，也算完成。`Cancel` 把任务标记为 `cancelling` 并取消它的上下文。`SwitchOutput` 启动一次切换（`audio.Switch`）并立即返回；同一时间只进行一次（`ErrSwitching`），任务运行时也可以进行，并且在报告结束之前会先重新读取输出。`Shutdown(timeout)` 取消任务和读取，并等待 Windows 正在处理的请求和切换；超时后返回 false。`NewDemo` 返回带虚构设备和虚构输出的 adapter，用于试用窗口：显示器始终是一个输出，设备在连接时是一个输出，默认输出消失时由显示器接替。
 
 ### 程序如何启动
 
@@ -336,8 +406,9 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 `ui.Run` 使用 `github.com/jchv/go-webview2`（ADR 0003）：
 
-- 页面是 `web/index.html`，嵌入在可执行文件中。它不从外部加载任何内容（内容安全策略），并且以文本方式设置设备名称。
-- 绑定了四个函数：`blState()`、`blConnect(address)`、`blDisconnect(address)`、`blCancel()`。它们都立即返回。页面每 500 毫秒调用一次 `blState`，根据状态绘制卡片；另一个定时器更新已用时间和倒计时。已结束的任务在 8 秒后从卡片上消失（失败的是 30 秒）。
+- 页面是 `web/index.html`，嵌入在可执行文件中。它不从外部加载任何内容（内容安全策略），并且以文本方式设置设备和输出的名称。
+- 绑定了五个函数：`blState()`、`blConnect(address)`、`blDisconnect(address)`、`blCancel()`、`blSwitch(id)`。它们都立即返回。页面每 500 毫秒调用一次 `blState`，根据状态绘制输出列表和卡片；另一个定时器更新已用时间和倒计时。已结束的任务在 8 秒后从卡片上消失（失败的是 30 秒）。
+- 顶部是 *声音输出* 区块：每个输出一行，带表示类型的图标。当前输出有对勾，其他每行有一个 **Switch** 按钮。切换进行中这些按钮被禁用，被点击的那个显示"Switching…"。切换失败时在列表下方说明原因 30 秒。蓝牙设备的卡片在下方的 *蓝牙设备* 之下。
 - 每张卡片有一个按钮：该设备正在连接时是 Cancel，已连接时是 Disconnect，其他情况是 Connect。有任务运行时，其他卡片的按钮被禁用。页面头部显示图标，标题栏和任务栏按钮则按窗口所在的 DPI 取程序图标中合适的尺寸（`setWindowIcons`）。
 - 页面跟随 Windows 的深色或浅色主题。当用户的应用使用深色主题时，标题栏切换为深色。进程是 per-monitor DPI 感知的，窗口按系统 DPI 缩放。WebView2 的数据保存在 `%LocalAppData%\BlueLatch\WebView2`。
 - 页面会阻止刷新（F5、Ctrl+R）、打印、保存、查找、缩放和拖入文件，因为页面是从字符串加载的，刷新会让它变空。
@@ -350,7 +421,7 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 
 ### 日志
 
-`internal/logging` 写入 `%LocalAppData%\BlueLatch\bluelatch.log`（文本，英文）。程序启动时，如果文件超过 1 MiB，会被移到 `bluelatch.log.1`（保留一份旧日志）。每次请求都会记录每个服务的结果，包括 Windows 错误码。`-v` 会为每次读取设备状态增加一行，命令行还会同时写到 stderr。
+`internal/logging` 写入 `%LocalAppData%\BlueLatch\bluelatch.log`（文本，英文）。程序启动时，如果文件超过 1 MiB，会被移到 `bluelatch.log.1`（保留一份旧日志）。每次请求都会记录每个服务的结果，包括 Windows 错误码；每次默认输出的改变也会连同输出和角色记录下来（失败时带 HRESULT）。`-v` 会为每次读取设备状态增加一行，命令行还会同时写到 stderr。
 
 ### 尚未验证
 
@@ -363,3 +434,8 @@ internal/logging, internal/appdir:  %LocalAppData%\BlueLatch\  (log, journal, We
 - 蓝牙关闭时 Windows 是否报告没有适配器（`bt.ErrNoRadio`）。没有试过，因为关闭蓝牙会断开正在使用的设备。
 - 有多个蓝牙适配器的电脑。
 - 在没有 Windows Terminal 的电脑上，以及一般意义上的其他电脑上，双击之后控制台窗口会显示多久（ADR 0008）。
+- 窗口的 **Switch** 按钮对真实输出的效果。切换是用 `bluelatch switch` 试过的（运行手册检查 8）；按钮只在演示模式下点过。
+- 带 Hands-Free 的耳机或耳塞会向列表中增加哪些输出，以及切换到它们的效果。
+- 默认输出改变时，正在播放的声音是否立刻跟着过去。这取决于播放它的应用。
+- 通话在单独的输出上时的切换，以及缺少 `IPolicyConfig` 的电脑。
+- 快捷方式运行 `bluelatch switch` 时会看到什么。与窗口一样（ADR 0008），预计 Windows 会在命令运行期间给它一个控制台窗口。

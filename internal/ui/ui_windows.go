@@ -4,7 +4,7 @@
 // of internal/app and passes the clicks on to it. The page is one HTML file that
 // is embedded in the executable (web/index.html). It has no logic of its own
 // beyond drawing: it reads the state with blState every half second, and calls
-// blConnect and blCancel.
+// blConnect, blDisconnect, blCancel and blSwitch.
 package ui
 
 import (
@@ -79,7 +79,7 @@ func Run(a *app.App, opt Options) error {
 	installCloseGuard(hwnd, a, w, opt.Log)
 
 	// The bound functions run on the thread of the window, so they must return at
-	// once: Connect only starts a job, and the state is a copy.
+	// once: Connect and SwitchOutput only start the work, and the state is a copy.
 	if err := w.Bind("blState", func() app.State { return a.Snapshot() }); err != nil {
 		return err
 	}
@@ -90,6 +90,9 @@ func Run(a *app.App, opt Options) error {
 		return err
 	}
 	if err := w.Bind("blCancel", func() { a.Cancel() }); err != nil {
+		return err
+	}
+	if err := w.Bind("blSwitch", func(id string) error { return a.SwitchOutput(id) }); err != nil {
 		return err
 	}
 	lang, err := json.Marshal(opt.Lang)

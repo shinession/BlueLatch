@@ -1,9 +1,11 @@
 package app
 
 import (
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/shinession/bluelatch/internal/audio"
 	"github.com/shinession/bluelatch/internal/bt"
 )
 
@@ -14,20 +16,30 @@ const (
 	DemoHeadphones bt.Address = 0xDE0000000003
 )
 
-// NewDemo returns an adapter with three made-up devices, so the window can be
-// tried without touching a real device (bluelatch window -demo). The speaker is
-// connected. The earbuds connect on the third request. The headphones never
-// connect, which is what the Cancel button is for. Any of them can be
-// disconnected, and the earbuds then need three requests again. A reconnect
-// request takes two seconds and cannot be interrupted, like a real one; a
-// disconnect request takes one.
-func NewDemo() bt.Adapter { return newDemo(2 * time.Second) }
+// DemoMonitor is the ID of the made-up output that is there all the time. The
+// other made-up outputs belong to the devices.
+const DemoMonitor = "demo-output-monitor"
+
+// NewDemo returns an adapter with three made-up devices and made-up sound
+// outputs, so the window can be tried without touching a real device (bluelatch
+// window -demo). The speaker is connected and is the default output. The earbuds
+// connect on the third request. The headphones never connect, which is what the
+// Cancel button is for. Any of them can be disconnected, and the earbuds then
+// need three requests again. A reconnect request takes two seconds and cannot be
+// interrupted, like a real one; a disconnect request takes one. A monitor is
+// always an output; a device is one while it is connected, and the monitor takes
+// over when the default output goes away.
+func NewDemo() (bt.Adapter, audio.Adapter) {
+	d := newDemo(2 * time.Second)
+	return d, d
+}
 
 type demo struct {
 	delay time.Duration // how long a reconnect request takes
 
-	mu      sync.Mutex
-	devices []*demoDevice
+	mu       sync.Mutex
+	devices  []*demoDevice
+	defaults audio.Defaults
 }
 
 type demoDevice struct {
@@ -43,7 +55,7 @@ func newDemo(delay time.Duration) *demo {
 		d.Remembered, d.Authenticated = true, true
 		return d
 	}
-	return &demo{delay: delay, devices: []*demoDevice{
+	d := &demo{delay: delay, devices: []*demoDevice{
 		{dev: paired(bt.Device{Name: "Demo Speaker", Address: DemoSpeaker, Class: 0x240414,
 			Services: []bt.Service{bt.ServiceA2DPSink, bt.ServiceAVRCPTarget}}), connected: true},
 		{dev: paired(bt.Device{Name: "Demo Earbuds", Address: DemoEarbuds, Class: 0x248404,
@@ -51,6 +63,56 @@ func newDemo(delay time.Duration) *demo {
 		{dev: paired(bt.Device{Name: "Demo Headphones", Address: DemoHeadphones, Class: 0x240418,
 			Services: []bt.Service{bt.ServiceA2DPSink}})},
 	}}
+	speaker := demoOutput(d.devices[0].dev).ID
+	d.defaults = audio.Defaults{speaker, speaker, speaker}
+	return d
+}
+
+// demoOutput is the sound output of a made-up device, named the way Windows names them.
+func demoOutput(dev bt.Device) audio.Output {
+	kind, what := audio.KindHeadphones, "Headphones"
+	if dev.Class.Minor() == 0x05 { // loudspeaker
+		kind, what = audio.KindSpeaker, "Speakers"
+	}
+	return audio.Output{ID: "demo-output-" + dev.Address.String(), Name: what + " (" + dev.Name + ")", Kind: kind}
+}
+
+// outputs returns the sound outputs as Windows would list them now. The caller
+// holds the lock.
+func (d *demo) outputs() []audio.Output {
+	outputs := []audio.Output{{ID: DemoMonitor, Name: "Demo Monitor (Demo Display Audio)", Kind: audio.KindDisplay}}
+	for _, x := range d.devices {
+		if x.snapshot().Connected {
+			outputs = append(outputs, demoOutput(x.dev))
+		}
+	}
+	audio.SortOutputs(outputs)
+	return outputs
+}
+
+// State reads the made-up outputs. A default that has gone is taken over by the
+// monitor.
+func (d *demo) State() (audio.State, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	outputs := d.outputs()
+	for role, id := range d.defaults {
+		if !slices.ContainsFunc(outputs, func(o audio.Output) bool { return o.ID == id }) {
+			d.defaults[role] = DemoMonitor
+		}
+	}
+	return audio.State{Outputs: outputs, Defaults: d.defaults}, nil
+}
+
+// SetDefault makes a made-up output the default one of the role.
+func (d *demo) SetDefault(id string, role audio.Role) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !slices.ContainsFunc(d.outputs(), func(o audio.Output) bool { return o.ID == id }) {
+		return audio.ErrNotFound
+	}
+	d.defaults[role] = id
+	return nil
 }
 
 // snapshot returns the device as Windows would report it now. The caller holds

@@ -1,6 +1,7 @@
 // Command bluelatch lists the paired Bluetooth audio devices, connects one of
-// them and retries until the connection holds, and disconnects one. Without a
-// command it opens the window that does the same with buttons.
+// them and retries until the connection holds, and disconnects one. It also
+// switches the sound output of Windows. Without a command it opens the window
+// that does the same with buttons.
 //
 // It is one console program for both (ADR 0008): the command line needs a
 // console subsystem program so that a shell waits for it and sees its exit code,
@@ -14,6 +15,7 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/shinession/bluelatch/internal/audio"
 	"github.com/shinession/bluelatch/internal/bt"
 	"github.com/shinession/bluelatch/internal/logging"
 )
@@ -30,9 +32,12 @@ Usage:
   bluelatch list [-all] [-v]
   bluelatch connect [-v] [-attempt-timeout 10s] [-stable 2s] [-max-attempts N] <name or address>
   bluelatch disconnect [-v] [-wait 5s] <name or address>
+  bluelatch switch [-v] [<name or ID>]
   bluelatch version
 
 Without a command, BlueLatch opens its window, as "bluelatch window" does.
+"bluelatch switch" changes the sound output of Windows: to the next one, or to
+the one named.
 Run "bluelatch <command> -h" for the flags of a command.
 `
 
@@ -40,6 +45,7 @@ Run "bluelatch <command> -h" for the flags of a command.
 type cli struct {
 	stdout, stderr io.Writer
 	newAdapter     func(*slog.Logger) (bt.Adapter, error)
+	newAudio       func(*slog.Logger) (audio.Adapter, error)
 	openLog        func(verbose bool) (*slog.Logger, func())
 
 	// For the window (window.go, window_windows.go).
@@ -53,6 +59,7 @@ func main() {
 		stdout:     os.Stdout,
 		stderr:     os.Stderr,
 		newAdapter: bt.New,
+		newAudio:   audio.New,
 	}
 	c.useWindowsHost()
 	c.openLog = func(verbose bool) (*slog.Logger, func()) {
@@ -80,6 +87,8 @@ func (c *cli) run(args []string) int {
 		return c.connect(args[1:])
 	case "disconnect":
 		return c.disconnect(args[1:])
+	case "switch":
+		return c.switchOutput(args[1:])
 	case "version", "-version", "--version":
 		fmt.Fprintf(c.stdout, "bluelatch %s (%s %s/%s)\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		return 0

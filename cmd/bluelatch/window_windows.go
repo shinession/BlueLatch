@@ -7,6 +7,7 @@ import (
 
 	"github.com/shinession/bluelatch/internal/app"
 	"github.com/shinession/bluelatch/internal/appdir"
+	"github.com/shinession/bluelatch/internal/audio"
 	"github.com/shinession/bluelatch/internal/bt"
 	"github.com/shinession/bluelatch/internal/latch"
 	"github.com/shinession/bluelatch/internal/logging"
@@ -41,8 +42,9 @@ func (c *cli) runWindow(o windowOptions) int {
 	defer release()
 
 	var adapter bt.Adapter
+	var sound audio.Adapter
 	if o.demo {
-		adapter = app.NewDemo()
+		adapter, sound = app.NewDemo()
 	} else {
 		var err error
 		if adapter, err = c.newAdapter(log); err != nil {
@@ -51,10 +53,16 @@ func (c *cli) runWindow(o windowOptions) int {
 			return 1
 		}
 		switchOnForgottenServices(adapter, log)
+		// Without the audio API the window works; it just has no list of outputs.
+		if sound, err = c.newAudio(log); err != nil {
+			log.Error("the audio API is not available", "err", err)
+			sound = nil
+		}
 	}
 
 	application := app.New(app.Config{
 		Adapter: adapter,
+		Audio:   sound,
 		Policy:  latch.DefaultPolicy(),
 		Log:     log,
 		Version: version,
